@@ -9,7 +9,7 @@ import re
 #                      KONFIGURASI (WAJIB UBAH BAGIAN INI)
 # ==============================================================================
 VPS_IP = "31.97.110.253"           # IP VPS Anda
-VPS_USER = "root"                  # Username (sudah pasti root)
+VPS_USER = "ubuntu"                  # Username (sudah pasti root)
 SSH_KEY_PATH = "C:/Users/Ridwan Taufik/.ssh/id_ed25519_ridwantaufik_programmer" 
 # ==============================================================================
 # ==============================================================================
