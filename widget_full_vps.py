@@ -1085,10 +1085,10 @@ class VPSSecurityMonitor(ctk.CTk):
     def fetch_security_data(self):
         """Fetch security-related data"""
         try:
-            # Command dengan sudo untuk user ubuntu
+            # PERUBAHAN: Semua perintah sensitif diberi 'sudo' di depannya
             cmd = '''
             echo "---PORTS---"
-            ss -tuln 2>/dev/null | grep LISTEN || sudo ss -tuln 2>/dev/null | grep LISTEN || echo "No ports"
+            sudo ss -tuln | grep LISTEN || echo "No ports"
             echo "---UFW---"
             sudo ufw status 2>/dev/null || echo "UFW: not available"
             echo "---IPTABLES---"
@@ -1098,13 +1098,13 @@ class VPSSecurityMonitor(ctk.CTk):
             echo "---CRON---"
             crontab -l 2>/dev/null || echo "No crontab for current user"
             echo "---LAST---"
-            last -n 15 -F 2>/dev/null || sudo last -n 15 -F 2>/dev/null || echo "No login history"
+            sudo last -n 15 -F 2>/dev/null || echo "No login history"
             echo "---NET---"
-            ss -tunap 2>/dev/null | grep ESTAB || echo "No established connections"
+            sudo ss -tunap | grep ESTAB || echo "No established connections"
             echo "---SUSP---"
-            ps aux 2>/dev/null | grep -E "nc |ncat |/dev/tcp|bash -i|sh -i|perl.*socket|python.*socket" | grep -v grep || echo "No suspicious processes"
+            sudo ps aux | grep -E "nc |ncat |/dev/tcp|bash -i|sh -i|perl.*socket|python.*socket" | grep -v grep || echo "No suspicious processes"
             echo "---TOP---"
-            ps aux --sort=-%cpu 2>/dev/null | head -n 31 || echo "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND"
+            ps aux --sort=-%cpu | head -n 31 || echo "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND"
             echo "---FAILED---"
             sudo grep "Failed password" /var/log/auth.log 2>/dev/null | tail -n 20 || sudo journalctl -u ssh -n 20 --no-pager 2>/dev/null | grep -i "failed" || echo "No failed login data available"
             echo "---END---"
