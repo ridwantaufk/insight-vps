@@ -957,44 +957,57 @@ class VPSSecurityMonitor(ctk.CTk):
             time.sleep(2)
 
     def fetch_basic_data(self):
-        """Fetch basic system metrics"""
+        """Fetch basic system metrics (FIXED: ONE-LINER COMMAND)"""
         try:
-            # Basic commands (tidak perlu sudo)
-            cmd = '''
-            export TERM=xterm
-            echo "---CPU---"
-            top -bn1 | grep "Cpu(s)" 2>/dev/null || echo "0.0 us, 0.0 sy"
-            echo "---RAM---"
-            free -m 2>/dev/null || echo "Mem: 0 0 0 0 0 0 0"
-            echo "---DISK---"
-            df -h / 2>/dev/null | tail -n1 || echo "/ 0G 0G 0G 0% /"
-            echo "---UPTIME---"
-            uptime -p 2>/dev/null || echo "unknown"
-            echo "---LOAD---"
-            uptime 2>/dev/null | awk -F"load average:" "{print \$2}" || echo "0.00, 0.00, 0.00"
-            echo "---SWAP---"
-            free -m 2>/dev/null | grep Swap || echo "Swap: 0 0 0"
-            echo "---NET---"
-            cat /proc/net/dev 2>/dev/null | grep -E "eth0|ens|enp|wlan" | head -n1 || echo "eth0: 0 0 0 0 0 0 0 0 0 0"
-            echo "---PS---"
-            ps -eo comm,%cpu,%mem --sort=-%cpu 2>/dev/null | head -n 8 || echo "COMMAND %CPU %MEM"
-            echo "---END---"
-            '''
+            # KITA UBAH JADI SATU BARIS MEMANJANG AGAR WINDOWS TIDAK BINGUNG
+            # Gunakan path lengkap (/usr/bin/...) untuk keamanan
+            cmd = (
+                "export LC_ALL=C; "  # Paksa bahasa Inggris agar angka pakai titik
+                "export TERM=xterm; "
+                "echo '---CPU---'; "
+                "/usr/bin/top -bn1 | grep 'Cpu(s)' || echo '0.0'; "
+                "echo '---RAM---'; "
+                "/usr/bin/free -m || echo 'Mem: 0 0 0 0 0 0 0'; "
+                "echo '---DISK---'; "
+                "/usr/bin/df -h / | tail -n1 || echo '/ 0G 0G 0G 0% /'; "
+                "echo '---UPTIME---'; "
+                "/usr/bin/uptime -p || echo 'unknown'; "
+                "echo '---LOAD---'; "
+                "/usr/bin/uptime | awk -F'load average:' '{print $2}' || echo '0.00, 0.00, 0.00'; "
+                "echo '---SWAP---'; "
+                "/usr/bin/free -m | grep Swap || echo 'Swap: 0 0 0'; "
+                "echo '---NET---'; "
+                "cat /proc/net/dev | grep -E 'eth0|ens|enp|wlan' | head -n1 || echo 'eth0: 0 0 0 0 0 0 0 0 0 0'; "
+                "echo '---PS---'; "
+                "ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 8 || echo 'COMMAND %CPU %MEM'; "
+                "echo '---END---'"
+            )
             
             out = self.run_ssh_command(cmd)
+            
+            # --- DEBUGGING SEMENTARA (Boleh dihapus nanti) ---
+            if not out:
+                print("⚠️ DEBUG: Data Basic Kosong!")
+            # -----------------------------------------------
+
             if not out:
                 self.connection_ok = False
                 return
             
+            # ... (SISA KODE PARSING DI BAWAH INI SAMA SEPERTI SEBELUMNYA, JANGAN DIUBAH) ...
             # Parse CPU
             try:
-                cpu_sec = out.split("---CPU---")[1].split("---RAM---")[0].strip().replace(',', '.')
-                cpu_vals = re.findall(r'[\d.]+', cpu_sec)
+                # Ambil bagian CPU
+                part_cpu = out.split("---CPU---")[1].split("---RAM---")[0].strip()
+                # Hapus kata-kata, sisakan angka dan titik
+                cpu_clean = part_cpu.replace(',', '.') 
+                cpu_vals = re.findall(r'[\d.]+', cpu_clean)
+                # Ambil 2 angka pertama (user + system)
                 cpu = float(cpu_vals[0]) + float(cpu_vals[1]) if len(cpu_vals) >= 2 else 0.0
             except:
                 cpu = 0.0
             
-            # Parse RAM (improved accuracy)
+            # Parse RAM
             try:
                 ram_sec = out.split("---RAM---")[1].split("---DISK---")[0].strip()
                 ram_lines = ram_sec.split('\n')
