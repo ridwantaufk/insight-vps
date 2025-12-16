@@ -963,7 +963,7 @@ class VPSSecurityMonitor(ctk.CTk):
             # Gunakan path lengkap (/usr/bin/...) untuk keamanan
             cmd = (
                 "export LC_ALL=C; "  # Paksa bahasa Inggris agar angka pakai titik
-                "export TERM=xterm; "
+                "export TERM=xterm; 
                 "echo '---CPU---'; "
                 "/usr/bin/top -bn1 | grep 'Cpu(s)' || echo '0.0'; "
                 "echo '---RAM---'; "
