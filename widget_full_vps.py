@@ -2276,7 +2276,6 @@ echo "---END---"
             
             if error:
                 vps_logger.warning(f"fetch_basic_data failed: {error}")
-                self.connection_ok = False
                 return
             
             if not result:
