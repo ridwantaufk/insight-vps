@@ -1213,6 +1213,10 @@ class VPSSecurityMonitor(ctk.CTk):
             sudo grep "Failed password" /var/log/auth.log 2>/dev/null | tail -n 30 || echo "No failed logins"
             echo "---ATTACKERS---"
             sudo lastb -n 50 -F 2>/dev/null || echo "No bad logins"
+            echo "---SYSLOG---"
+            sudo journalctl -n 50 --no-pager 2>/dev/null || sudo tail -n 50 /var/log/syslog 2>/dev/null || echo "No system logs"
+            echo "---KERNEL---"
+            sudo dmesg | tail -n 30 2>/dev/null || echo "No kernel logs"
             echo "---END---"
             '''
             
