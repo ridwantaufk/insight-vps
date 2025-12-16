@@ -1364,7 +1364,7 @@ class VPSSecurityMonitor(ctk.CTk):
         self.txt_proc.delete("1.0", "end")
         self.txt_proc.insert("1.0", txt)
         self.txt_proc.configure(state="disabled")
-
+``
     def update_expanded_ui(self, cpu, ram_used, ram_total, disk, uptime):
         """Update expanded UI"""
         if not self.is_expanded or not hasattr(self, 'lbl_cpu_exp'):
