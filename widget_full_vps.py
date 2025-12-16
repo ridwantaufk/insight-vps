@@ -2102,44 +2102,27 @@ class VPSSecurityMonitor(ctk.CTk):
                 time.sleep(5)
 
     def fetch_basic_data(self):
-        """Fetch basic data - OPTIMIZED"""
-        if not self.connection_ok:
-            return
-        
+        """Fetch basic data - OPTIMIZED for Paramiko"""
         try:
-            # Command yang lebih efisien - hapus 2>/dev/null yang tidak perlu
             cmd = '''
-echo "---CPU---"
-top -bn1 | grep "Cpu(s)" | awk '{print 100-$8}'
-echo "---CORES---"
-nproc
-echo "---RAM---"
-free -m | grep Mem
-echo "---DISK---"
-df -h / | tail -n1
-echo "---UPTIME---"
-uptime -p 2>/dev/null || uptime
-echo "---LOAD---"
-cat /proc/loadavg | awk '{print $1,$2,$3}'
-echo "---SWAP---"
-free -m | grep Swap
-echo "---NET---"
-cat /proc/net/dev | grep -E "eth0|ens|enp" | head -n1
-echo "---PS---"
-ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 11
-echo "---END---"
+            echo "---CPU---"; top -bn1 | grep "Cpu(s)" | awk '{print 100-$8}';
+            echo "---CORES---"; nproc;
+            echo "---RAM---"; free -m | grep Mem;
+            echo "---DISK---"; df -h / | tail -n1;
+            echo "---UPTIME---"; uptime -p 2>/dev/null || uptime;
+            echo "---LOAD---"; cat /proc/loadavg | awk '{print $1,$2,$3}';
+            echo "---SWAP---"; free -m | grep Swap;
+            echo "---NET---"; cat /proc/net/dev | grep -E "eth0|ens|enp" | head -n1;
+            echo "---PS---"; ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 11;
+            echo "---END---"
             '''
-            
             result, error = self.ssh_manager.execute(cmd, timeout=10)
             
-            if error:
+            if error or not result:
                 vps_logger.warning(f"fetch_basic_data failed: {error}")
                 return
             
-            if not result:
-                return
-            
-            # Parse dengan error handling minimal
+            # (The rest of the parsing logic remains the same)
             try:
                 sections = {}
                 current_section = None
@@ -2153,84 +2136,53 @@ echo "---END---"
                 # CPU
                 cpu_val = 0.0
                 if 'CPU' in sections and sections['CPU']:
-                    try:
-                        cpu_str = sections['CPU'][0].strip()
-                        cpu_val = float(cpu_str) if cpu_str else 0.0
-                    except:
-                        pass
+                    try: cpu_val = float(sections['CPU'][0].strip()) if sections['CPU'][0].strip() else 0.0
+                    except: pass
                 self.last_cpu = cpu_val
                 
-                # Cores
                 if 'CORES' in sections and sections['CORES']:
-                    try:
-                        self.cpu_cores = int(sections['CORES'][0].strip())
-                    except:
-                        pass
+                    try: self.cpu_cores = int(sections['CORES'][0].strip())
+                    except: pass
                 
-                # RAM
                 if 'RAM' in sections and sections['RAM']:
                     try:
                         ram_line = sections['RAM'][0].strip().split()
                         if len(ram_line) >= 7:
-                            self.last_ram_total = int(ram_line[1])
-                            self.last_ram_used = int(ram_line[2])
-                            self.last_ram_available = int(ram_line[6])
+                            self.last_ram_total, self.last_ram_used, self.last_ram_available = int(ram_line[1]), int(ram_line[2]), int(ram_line[6])
                             self.last_ram_pct = self.last_ram_used / self.last_ram_total if self.last_ram_total > 0 else 0
-                    except:
-                        pass
+                    except: pass
                 
-                # DISK
                 if 'DISK' in sections and sections['DISK']:
                     try:
                         disk_line = sections['DISK'][0].strip().split()
-                        if len(disk_line) >= 5:
-                            self.security_data['disk_usage'] = {'percentage': disk_line[4].replace('%', '')}
-                    except:
-                        pass
+                        if len(disk_line) >= 5: self.security_data['disk_usage'] = {'percentage': disk_line[4].replace('%', '')}
+                    except: pass
                 
-                # UPTIME
-                if 'UPTIME' in sections and sections['UPTIME']:
-                    self.last_uptime = sections['UPTIME'][0].strip().replace('up ', '')
+                if 'UPTIME' in sections and sections['UPTIME']: self.last_uptime = sections['UPTIME'][0].strip().replace('up ', '')
+                if 'LOAD' in sections and sections['LOAD']: self.last_load_avg = sections['LOAD'][0].strip()
                 
-                # LOAD
-                if 'LOAD' in sections and sections['LOAD']:
-                    self.last_load_avg = sections['LOAD'][0].strip()
-                
-                # SWAP
                 if 'SWAP' in sections and sections['SWAP']:
                     try:
                         swap_line = sections['SWAP'][0].strip().split()
                         if len(swap_line) >= 3:
-                            self.last_swap_total = int(swap_line[1])
-                            self.last_swap_used = int(swap_line[2])
-                    except:
-                        pass
+                            self.last_swap_total, self.last_swap_used = int(swap_line[1]), int(swap_line[2])
+                    except: pass
                 
-                # NETWORK
                 if 'NET' in sections and sections['NET']:
                     try:
                         net_line = sections['NET'][0].strip().split()
                         if len(net_line) >= 10:
-                            self.network_stats = {
-                                'rx': round(int(net_line[1]) / 1024 / 1024, 2),
-                                'tx': round(int(net_line[9]) / 1024 / 1024, 2)
-                            }
-                    except:
-                        pass
+                            self.network_stats = {'rx': round(int(net_line[1])/1024/1024,2), 'tx': round(int(net_line[9])/1024/1024,2)}
+                    except: pass
                 
-                # PROCESSES
-                if 'PS' in sections:
-                    self.last_proc_list = [l.strip() for l in sections['PS'][1:] if l.strip()]
-                
-                # Update UI
+                if 'PS' in sections: self.last_proc_list = [l.strip() for l in sections['PS'][1:] if l.strip()]
                 self.after(0, self.update_ui_with_latest_data)
                 
             except Exception as e:
-                vps_logger.error(f"Parse error in fetch_basic_data: {str(e)}")
+                vps_logger.error(f"Parse error in fetch_basic_data: {e}", exc_info=True)
             
         except Exception as e:
-            vps_logger.error(f"fetch_basic_data exception: {str(e)}", exc_info=True)
-            self.connection_ok = False
+            vps_logger.error(f"fetch_basic_data exception: {e}", exc_info=True)
 
     def fetch_security_data(self):
         """Fetch security data"""
