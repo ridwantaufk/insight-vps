@@ -204,8 +204,6 @@ class SSHConnectionManager:
             return
 
         try:
-            # Use stdbuf to ensure line-buffering for real-time output
-            # The command now directly starts a root shell
             cmd = f'ssh -T {self.host} "stdbuf -o0 sudo -i"'
             
             self.logger.info(f"Starting persistent SSH session with: {cmd}")
@@ -214,20 +212,19 @@ class SSHConnectionManager:
                 cmd.split(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+                stderr=subprocess.STDOUT,
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                bufsize=1,  # Line-buffered
+                bufsize=1,
             )
             
-            # Start a thread to read output asynchronously
             self.reader = threading.Thread(target=self._reader_thread, daemon=True)
             self.reader.start()
             self.logger.info("Persistent SSH session process started.")
             
-            # Test the connection to ensure the shell is ready
-            test_result, err = self.execute('echo "READY"', timeout=10)
+            # Test the connection to ensure the shell is ready, bypassing the session_ready check
+            test_result, err = self.execute('echo "READY"', timeout=10, _force_initial_check=True)
             if err or "READY" not in test_result:
                 self.logger.error(f"Post-connection check failed. Error: {err}, Output: {test_result[:100]}")
                 self.session_ready = False
@@ -240,17 +237,18 @@ class SSHConnectionManager:
             self.process = None
             self.session_ready = False
 
-    def execute(self, command, timeout=15):
+    def execute(self, command, timeout=15, _force_initial_check=False):
         """Executes a command in the persistent root shell."""
-        if not self.session_ready or not self.process or self.process.poll() is not None:
-            self.logger.error("SSH session is not ready or has terminated.")
-            # In a real-world scenario, you might want to trigger a reconnect here.
+        # The _force_initial_check flag is used only by start_session to break the deadlock
+        if not _force_initial_check and not self.session_ready:
+            self.logger.error("Cannot execute command, SSH session not ready.")
             return "", "SSH session not running."
 
-        # A unique boundary to know when the command has finished
+        if not self.process or self.process.poll() is not None:
+             self.logger.error("Cannot execute command, SSH process has terminated.")
+             return "", "SSH process terminated."
+
         boundary = f"END_OF_COMMAND_{uuid.uuid4()}"
-        
-        # We send the command and then immediately echo the boundary.
         full_command = f"{command}; echo {boundary}\n"
         
         try:
@@ -262,25 +260,20 @@ class SSHConnectionManager:
             start_time = time.time()
             
             while True:
-                # Check for command timeout
                 if time.time() - start_time > timeout:
                     self.logger.error(f"Command '{command[:50]}' timed out after {timeout}s.")
                     return "".join(output_lines), "Timeout"
                 
                 try:
-                    # Wait for a line from the reader thread
                     line = self.output_queue.get(timeout=0.2)
                     
-                    # If the boundary is in the line, we're done.
                     if boundary in line:
                         break
                     
-                    # Don't include the prompt (e.g., "root@hostname:~# ") in the output
                     if 'root@' not in line and ':~#' not in line:
                         output_lines.append(line)
 
                 except Queue.Empty:
-                    # If the queue is empty, check if the process is still alive
                     if self.process.poll() is not None:
                         self.logger.error("SSH process terminated unexpectedly during command execution.")
                         self.session_ready = False
@@ -291,7 +284,6 @@ class SSHConnectionManager:
             
         except Exception as e:
             self.logger.error(f"Error executing command '{command[:50]}': {e}", exc_info=True)
-            # Mark session as not ready if we get a broken pipe or other I/O error
             self.session_ready = False
             return "", f"Error: {e}"
 
@@ -305,7 +297,7 @@ class SSHConnectionManager:
                 self.process.stdin.close()
                 self.process.stdout.close()
             except:
-                pass # Ignore errors on close
+                pass
             self.process.terminate()
             self.process.wait(timeout=5)
         if self.reader and self.reader.is_alive():
