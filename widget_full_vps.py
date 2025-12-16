@@ -2757,7 +2757,7 @@ echo "---END---"
             else:
                 self.after(0, self.update_status, "🔴 Failed", self.accent_red)
         
-        threading.Thread(target=do_reconnect, daemon=True).start()
+        threading.Thread(target=do_reconnect, daemon=True).start() 
 
     def _do_force_refresh(self):
         """Do force refresh"""
