@@ -1678,124 +1678,86 @@ class VPSSecurityMonitor(ctk.CTk):
         return c
 
     def _format_ports_tab(self):
-        """Format ports tab dengan penjelasan"""
+        """Format ports tab with explanations in a clean table format."""
         c = ""
-        
         ports = self.security_data.get('ports', [])
-        if ports:
-            c += f"📊 Total Port Terbuka: {len(ports)}\n\n"
-            c += "─" * 100 + "\n"
-            c += f"{'PROTOKOL':<12} {'PORT':<10} {'STATUS':<15} {'ALAMAT':<25} {'KETERANGAN'}\n"
-            c += "─" * 100 + "\n"
-            
-            port_info = {
-                '22': 'SSH - Remote Login (WAJIB diamankan)',
-                '80': 'HTTP - Web Server (tidak terenkripsi)',
-                '443': 'HTTPS - Web Server Aman (SSL/TLS)',
-                '3306': 'MySQL Database (jangan expose public!)',
-                '5432': 'PostgreSQL Database (jangan expose public!)',
-                '6379': 'Redis Cache (jangan expose public!)',
-                '27017': 'MongoDB (jangan expose public!)',
-                '8080': 'HTTP Alternatif - Development Server',
-                '25': 'SMTP - Mail Server',
-                '465': 'SMTPS - Mail Server Secure',
-                '587': 'SMTP Submission',
-                '21': 'FTP - File Transfer (TIDAK AMAN, gunakan SFTP)',
-                '53': 'DNS Server',
-                '3000': 'Node.js Development Server',
-                '8000': 'Python Development Server',
-                '9000': 'PHP-FPM atau lainnya',
-            }
-            
-            for port_line in ports[:50]:
-                # Extract port number
-                port_match = re.search(r':(\d+)\s', port_line)
-                if port_match:
-                    port_num = port_match.group(1)
-                    info = port_info.get(port_num, 'Service tidak dikenal')
-                    
-                    # Color code based on security
-                    security_icon = "🟢"
-                    if port_num in ['3306', '5432', '6379', '27017', '21']:
-                        security_icon = "🔴"
-                    elif port_num in ['80', '8080', '3000', '8000']:
-                        security_icon = "🟡"
-                    
-                    c += f"{security_icon} {port_line}\n"
-                    c += f"      └─ {info}\n\n"
-                else:
-                    c += f"  {port_line}\n"
-            
-            c += "\n" + "═" * 100 + "\n"
-            c += "⚠️  REKOMENDASI KEAMANAN PORT\n"
-            c += "═" * 100 + "\n\n"
-            c += "🔴 PORT BERBAHAYA (jika terbuka ke public):\n"
-            c += "   • Database ports (3306, 5432, 6379, 27017) - HARUS dibatasi!\n"
-            c += "   • FTP (21) - Gunakan SFTP (port 22) sebagai gantinya\n\n"
-            c += "🟡 PORT PERLU PERHATIAN:\n"
-            c += "   • HTTP (80) - Redirect ke HTTPS jika memungkinkan\n"
-            c += "   • Development ports (3000, 8000, 8080) - Jangan expose production\n\n"
-            c += "🟢 PORT AMAN:\n"
-            c += "   • HTTPS (443) - Gunakan SSL certificate valid\n"
-            c += "   • SSH (22) - Gunakan key authentication, disable password\n\n"
-            c += "📋 CARA MENUTUP PORT:\n"
-            c += "   1. Stop service: sudo systemctl stop <service_name>\n"
-            c += "   2. Disable autostart: sudo systemctl disable <service_name>\n"
-            c += "   3. Block dengan firewall: sudo ufw deny <port_number>\n"
-            
-        else:
-            c += "❌ Tidak ada port terbuka terdeteksi\n"
-            c += "   (Atau tidak memiliki akses untuk melihat netstat/ss)\n"
         
+        if not ports:
+            return "✅ Tidak ada port terbuka yang terdeteksi.\n"
+
+        c += f"{'PROTO':<8} {'ALAMAT LOKAL':<28} {'PROGRAM'}\n"
+        c += "─" * 80 + "\n"
+
+        port_info = {
+            '22': 'SSH - Remote Login (WAJIB diamankan)', '80': 'HTTP - Web Server (tidak terenkripsi)',
+            '443': 'HTTPS - Web Server Aman (SSL/TLS)', '3306': 'MySQL Database (jangan expose public!)',
+            '5432': 'PostgreSQL Database (jangan expose public!)', '6379': 'Redis Cache (jangan expose public!)',
+            '27017': 'MongoDB (jangan expose public!)', '21': 'FTP (TIDAK AMAN, gunakan SFTP)',
+        }
+
+        for line in ports[:50]:
+            try:
+                parts = line.split()
+                proto = parts[0]
+                local_address = parts[4]
+                program_match = re.search(r'users:\(\("([^"]+)"', line)
+                program = program_match.group(1) if program_match else 'N/A'
+                
+                port_num = local_address.split(':')[-1]
+                info = port_info.get(port_num, 'Layanan tidak umum')
+
+                # Color code based on security
+                if port_num in ['3306', '5432', '6379', '27017', '21']:
+                    line_str = f"🔴 {proto:<7} {local_address:<28} {program}\n"
+                    line_str += f"      └─ BERBAHAYA: {info}\n\n"
+                elif port_num == '80':
+                    line_str = f"🟡 {proto:<7} {local_address:<28} {program}\n"
+                    line_str += f"      └─ PERINGATAN: {info}\n\n"
+                else:
+                    line_str = f"🟢 {proto:<7} {local_address:<28} {program}\n"
+                    line_str += f"      └─ INFO: {info}\n\n"
+                c += line_str
+            except (IndexError, ValueError):
+                continue
         return c
 
+    def _get_process_name_from_line(self, ps_line):
+        """Extracts the process name from a `ps` output line."""
+        try:
+            # For `ps aux`, the command starts at column 11
+            return ps_line.split(None, 10)[-1]
+        except:
+            return ps_line
+
     def _format_processes_tab(self):
-        """Format processes tab dengan analisis keamanan"""
+        """Format processes tab with security analysis in a clean table format."""
         c = ""
-        
-        c += "─" * 100 + "\n"
-        c += f"{'USER':<12} {'PID':<8} {'CPU%':<8} {'MEM%':<8} {'COMMAND':<30} {'KETERANGAN'}\n"
-        c += "─" * 100 + "\n\n"
-        
         procs = self.security_data.get('top_processes', [])
         
-        for proc_line in procs[:40]:
-            c += f"{proc_line}\n"
-            
-            # Extract command name for info
-            parts = proc_line.split()
-            if len(parts) > 10:
-                cmd = parts[10]
-                info = self.get_process_info(cmd)
-                c += f"      └─ {info}\n"
+        if not procs:
+            return "⏳ Memuat data proses...\n"
+
+        c += f"{'USER':<10} {'PID':<8} {'%CPU':<6} {'%MEM':<6} {'COMMAND'}\n"
+        c += "─" * 80 + "\n"
+        
+        for line in procs[:40]:
+            try:
+                parts = line.split(None, 10)
+                if len(parts) < 11: continue
+                
+                user, pid, cpu, mem = parts[0], parts[1], parts[2], parts[3]
+                command = self._get_process_name_from_line(line)
+                
+                c += f"{user:<10} {pid:<8} {cpu:<6} {mem:<6} {command[:60]}\n"
+
+                # Add security info if relevant
+                proc_name_lower = command.lower()
+                for pattern, info in SUSPICIOUS_PATTERNS.items():
+                    if pattern in proc_name_lower:
+                        c += f"      └─ {info}\n"
+            except (IndexError, ValueError):
+                c += f"{line}\n" # Fallback for weird lines
             c += "\n"
-        
-        # Process Security Analysis
-        c += "\n" + "═" * 100 + "\n"
-        c += "🔍 ANALISIS KEAMANAN PROSES\n"
-        c += "═" * 100 + "\n\n"
-        
-        susp = self.security_data.get('suspicious_processes', [])
-        if susp:
-            threats = self.analyze_process_security(susp)
-            if threats:
-                c += "⚠️  PROSES MENCURIGAKAN TERDETEKSI:\n\n"
-                for threat in threats:
-                    c += f"{threat['severity']}\n"
-                    c += f"  Proses: {threat['process']}\n"
-                    c += f"  Info: {threat['description']}\n"
-                    c += f"  Aksi: Investigate dan kill jika berbahaya\n\n"
-            else:
-                c += "✅ Tidak ada proses mencurigakan\n"
-        else:
-            c += "✅ Semua proses terlihat normal\n"
-        
-        c += "\n💡 TIPS MONITORING PROSES:\n"
-        c += "   • Gunakan 'htop' untuk monitoring real-time\n"
-        c += "   • Check proses dengan CPU/RAM tinggi\n"
-        c += "   • Waspadai proses yang tidak dikenal\n"
-        c += "   • Kill proses: sudo kill -9 <PID>\n"
-        
         return c
 
     def _format_network_tab(self):
