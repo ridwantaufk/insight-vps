@@ -185,8 +185,11 @@ class SSHConnectionManager:
         self.command_timeout = 20
         
     def execute(self, command, timeout=None):
-        """Execute command with retry logic"""
+        """Execute command with retry logic and ControlMaster for performance"""
         timeout = timeout or self.command_timeout
+        
+        # Define a path for the control socket
+        control_path = f"~/.ssh/cm-%r@%h:%p"
         
         for attempt in range(self.max_retries):
             try:
@@ -200,8 +203,13 @@ class SSHConnectionManager:
                     '-o', 'ServerAliveCountMax=2',
                     '-o', 'BatchMode=yes',
                     '-o', 'TCPKeepAlive=yes',
+                    # --- PERFORMANCE BOOST ---
+                    '-o', 'ControlMaster=auto',
+                    '-o', f'ControlPath={control_path}',
+                    '-o', 'ControlPersist=60s',
+                    # -------------------------
                     '-i', self.key_path,
-                    self.host,  # ← PAKAI self.host (bukan self.ssh_host)
+                    self.host,
                     command
                 ]
                 
