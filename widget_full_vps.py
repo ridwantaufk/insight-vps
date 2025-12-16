@@ -2302,15 +2302,14 @@ class VPSSecurityMonitor(ctk.CTk):
         """Fetch extended data"""
         try:
             cmd = 'echo "---DOCKER---"; docker ps -a 2>/dev/null || echo "No docker"; echo "---END---"'
-                        out, err = self.ssh_manager.execute(cmd)
-                        vps_logger.debug(f"--- RAW OUTPUT from fetch_security_data ---\n{out}\n---------------------------------")
-                        if err or not out:
-                            return
+            out, err = self.ssh_manager.execute(cmd)
+            if err or not out:
+                return
             
             docker_out = out.split("---DOCKER---")[1].split("---END---")[0].strip()
             self.security_data['docker_containers'] = [l.strip() for l in docker_out.split('\n') if l.strip() and 'No docker' not in l]
             
-            self.after(0, self.update_tab_content) # <-- ADD THIS to refresh the main tab view
+            self.after(0, self.update_tab_content)
             
         except Exception as e:
              vps_logger.error(f"Error in fetch_extended_data: {e}", exc_info=True)
