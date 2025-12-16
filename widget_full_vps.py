@@ -244,11 +244,10 @@ class VPSSecurityMonitor(ctk.CTk):
         vps_logger.info("Initializing VPS Security Monitor")
         
         # --- Config ---
-        self.ssh_host = SSH_HOST
-        self.vps_ip = "Unknown"
+        self.vps_ip = VPS_IP
         
-        # SSH Connection Manager (New persistent session implementation)
-        self.ssh_manager = SSHConnectionManager(self.ssh_host, vps_logger)
+        # SSH Connection Manager (Paramiko implementation)
+        self.ssh_manager = SSHConnectionManager(VPS_IP, VPS_USER, SSH_KEY_PATH, vps_logger)
         
         # --- State ---
         self.is_ip_blurred = True
