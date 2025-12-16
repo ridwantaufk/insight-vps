@@ -274,7 +274,7 @@ class SSHConnectionManager:
                     if 'root@' not in line and ':~#' not in line:
                         output_lines.append(line)
 
-                except Queue.Empty:
+                except Empty:
                     if self.process.poll() is not None:
                         self.logger.error("SSH process terminated unexpectedly during command execution.")
                         self.session_ready = False
