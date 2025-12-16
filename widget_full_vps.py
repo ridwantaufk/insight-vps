@@ -2331,31 +2331,25 @@ class VPSSecurityMonitor(ctk.CTk):
             self.security_data['kernel_logs'] = [l.strip() for l in get_section('KERNEL').split('\n') if l.strip() and 'No kernel' not in l]
             
             self.after(0, self.update_security_ui)
+            self.after(0, self.update_tab_content) # <-- ADD THIS to refresh the main tab view
             
         except Exception as e:
-            print(f"Error: {e}")
+            vps_logger.error(f"Error in fetch_security_data: {e}", exc_info=True)
 
     def fetch_extended_data(self):
         """Fetch extended data"""
         try:
-            cmd = '''
-            echo "---DOCKER---"
-            docker ps -a 2>/dev/null || echo "No docker"
-            echo "---END---"
-            '''
-            
-            out = self.run_ssh_command(cmd)
-            if not out:
-                return
+            cmd = 'echo "---DOCKER---"; docker ps -a 2>/dev/null || echo "No docker"; echo "---END---"'
+            out, err = self.ssh_manager.execute(cmd)
+            if err or not out: return
             
             docker_out = out.split("---DOCKER---")[1].split("---END---")[0].strip()
-            self.security_data['docker_containers'] = [l.strip() for l in docker_out.split('\n') 
-                                                       if l.strip() and 'No docker' not in l]
+            self.security_data['docker_containers'] = [l.strip() for l in docker_out.split('\n') if l.strip() and 'No docker' not in l]
             
-            self.after(0, self.update_tab_content)
+            self.after(0, self.update_tab_content) # <-- ADD THIS to refresh the main tab view
             
-        except:
-            pass
+        except Exception as e:
+             vps_logger.error(f"Error in fetch_extended_data: {e}", exc_info=True)
 
     def update_compact_ui(self, cpu, ram_used, ram_total, ram_pct, proc_list):
         """Update compact UI"""
