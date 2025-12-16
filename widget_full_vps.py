@@ -388,6 +388,7 @@ class VPSSecurityMonitor(ctk.CTk):
         self.ssh_manager = SSHConnectionManager(self.ssh_host, vps_logger)
         
         # --- State ---
+        self.is_ip_blurred = True
         self.is_expanded = False
         self.running = True
         self.is_dragging = False
