@@ -530,8 +530,12 @@ class VPSSecurityMonitor(ctk.CTk):
         self.destroy()
         sys.exit()
 
-if __name__ == "__main__":
+def main():
+    """Fungsi utama untuk watchgod"""
     ctk.set_appearance_mode("Dark")
     ctk.set_default_color_theme("blue")
     app = VPSSecurityMonitor(ssh_alias=SSH_ALIAS)
     app.mainloop()
+
+if __name__ == "__main__":
+    main()
