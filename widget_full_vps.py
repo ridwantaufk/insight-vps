@@ -961,7 +961,7 @@ class VPSSecurityMonitor(ctk.CTk):
         try:
             # Basic commands (tidak perlu sudo)
             cmd = '''
-            
+            export TERM=xterm
             echo "---CPU---"
             top -bn1 | grep "Cpu(s)" 2>/dev/null || echo "0.0 us, 0.0 sy"
             echo "---RAM---"
