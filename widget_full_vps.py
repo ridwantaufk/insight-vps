@@ -177,19 +177,29 @@ vps_logger = VPSLogger()
 class SSHConnectionManager:
     """Manages SSH connections with retry logic"""
     def __init__(self, host, key_path):
-        self.host = host  # ← INI YANG KURANG
+        self.host = host
         self.key_path = key_path
         self.max_retries = 2
         self.retry_delay = 2
         self.connection_timeout = 8
         self.command_timeout = 20
+        self.control_path = None
+
+        # Robust ControlMaster path for Windows/Linux
+        try:
+            # Replace ':' with '-' for Windows filename compatibility
+            socket_filename = f"cm-%r@%h-%p"
+            socket_dir = os.path.expanduser("~/.ssh/sockets")
+            os.makedirs(socket_dir, exist_ok=True)
+            self.control_path = os.path.join(socket_dir, socket_filename)
+            vps_logger.info(f"Using SSH ControlPath: {self.control_path}")
+        except Exception as e:
+            vps_logger.error(f"Could not create SSH socket directory: {e}. ControlMaster disabled.")
+            self.control_path = None
         
     def execute(self, command, timeout=None):
         """Execute command with retry logic and ControlMaster for performance"""
         timeout = timeout or self.command_timeout
-        
-        # Define a path for the control socket
-        control_path = f"~/.ssh/cm-%r@%h:%p"
         
         for attempt in range(self.max_retries):
             try:
@@ -203,15 +213,22 @@ class SSHConnectionManager:
                     '-o', 'ServerAliveCountMax=2',
                     '-o', 'BatchMode=yes',
                     '-o', 'TCPKeepAlive=yes',
-                    # --- PERFORMANCE BOOST ---
-                    '-o', 'ControlMaster=auto',
-                    '-o', f'ControlPath={control_path}',
-                    '-o', 'ControlPersist=60s',
-                    # -------------------------
+                ]
+                
+                # --- PERFORMANCE BOOST (if path was created) ---
+                if self.control_path:
+                    ssh_cmd.extend([
+                        '-o', 'ControlMaster=auto',
+                        '-o', f'ControlPath={self.control_path}',
+                        '-o', 'ControlPersist=60s',
+                    ])
+                # --------------------------------------------------
+
+                ssh_cmd.extend([
                     '-i', self.key_path,
                     self.host,
                     command
-                ]
+                ])
                 
                 result = subprocess.run(
                     ssh_cmd,
@@ -229,6 +246,10 @@ class SSHConnectionManager:
                     error_msg = result.stderr.strip()
                     vps_logger.warning(f"Command failed with code {result.returncode}: {error_msg[:100]}")
                     
+                    if "Control socket connect" in error_msg and "No such file or directory" in error_msg:
+                         vps_logger.warning("Stale ControlMaster socket detected. Will not retry.")
+                         return "", f"Stale SSH Socket: {error_msg[:200]}"
+
                     if attempt < self.max_retries - 1:
                         time.sleep(self.retry_delay)
                         continue
