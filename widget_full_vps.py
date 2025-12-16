@@ -175,126 +175,142 @@ vps_logger = VPSLogger()
 #                      SSH CONNECTION MANAGER
 # ==============================================================================
 class SSHConnectionManager:
-    """Manages SSH connections with retry logic"""
-    def __init__(self, host, key_path):
+    """Manages a single, persistent, interactive SSH session as root."""
+    def __init__(self, host, logger):
         self.host = host
-        self.key_path = key_path
-        self.max_retries = 2
-        self.retry_delay = 2
-        self.connection_timeout = 8
-        self.command_timeout = 20
-        self.control_path = None
+        self.logger = logger
+        self.process = None
+        self.output_queue = Queue()
+        self.is_running = True
+        self.session_ready = False
+        
+        self.start_session()
 
-        # Robust ControlMaster path for Windows/Linux
+    def _reader_thread(self):
+        """Reads stdout/stderr from the SSH process and puts it into a queue."""
         try:
-            # Replace ':' with '-' for Windows filename compatibility
-            socket_filename = f"cm-%r@%h-%p"
-            socket_dir = os.path.expanduser("~/.ssh/sockets")
-            os.makedirs(socket_dir, exist_ok=True)
-            self.control_path = os.path.join(socket_dir, socket_filename)
-            vps_logger.info(f"Using SSH ControlPath: {self.control_path}")
+            for line in iter(self.process.stdout.readline, ''):
+                if not self.is_running:
+                    break
+                self.output_queue.put(line)
         except Exception as e:
-            vps_logger.error(f"Could not create SSH socket directory: {e}. ControlMaster disabled.")
-            self.control_path = None
+            self.logger.error(f"SSH reader thread exception: {e}", exc_info=True)
+        self.logger.info("SSH reader thread finished.")
+
+    def start_session(self):
+        """Starts the persistent `ssh sudo -i` session."""
+        if self.process and self.process.poll() is None:
+            self.logger.warning("start_session called, but process is already running.")
+            return
+
+        try:
+            # Use stdbuf to ensure line-buffering for real-time output
+            # The command now directly starts a root shell
+            cmd = f'ssh -T {self.host} "stdbuf -o0 sudo -i"'
+            
+            self.logger.info(f"Starting persistent SSH session with: {cmd}")
+            
+            self.process = subprocess.Popen(
+                cmd.split(),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Redirect stderr to stdout
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,  # Line-buffered
+            )
+            
+            # Start a thread to read output asynchronously
+            self.reader = threading.Thread(target=self._reader_thread, daemon=True)
+            self.reader.start()
+            self.logger.info("Persistent SSH session process started.")
+            
+            # Test the connection to ensure the shell is ready
+            test_result, err = self.execute('echo "READY"', timeout=10)
+            if err or "READY" not in test_result:
+                self.logger.error(f"Post-connection check failed. Error: {err}, Output: {test_result[:100]}")
+                self.session_ready = False
+            else:
+                self.logger.info("Persistent SSH session is ready and running as root.")
+                self.session_ready = True
+                
+        except Exception as e:
+            self.logger.error(f"Failed to start persistent SSH session: {e}", exc_info=True)
+            self.process = None
+            self.session_ready = False
+
+    def execute(self, command, timeout=15):
+        """Executes a command in the persistent root shell."""
+        if not self.session_ready or not self.process or self.process.poll() is not None:
+            self.logger.error("SSH session is not ready or has terminated.")
+            # In a real-world scenario, you might want to trigger a reconnect here.
+            return "", "SSH session not running."
+
+        # A unique boundary to know when the command has finished
+        boundary = f"END_OF_COMMAND_{uuid.uuid4()}"
         
-    def execute(self, command, timeout=None):
-        """Execute command with retry logic and ControlMaster for performance"""
-        timeout = timeout or self.command_timeout
+        # We send the command and then immediately echo the boundary.
+        full_command = f"{command}; echo {boundary}\n"
         
-        for attempt in range(self.max_retries):
+        try:
+            self.process.stdin.write(full_command)
+            self.process.stdin.flush()
+            self.logger.debug(f"Executed: {command[:100]}")
+            
+            output_lines = []
+            start_time = time.time()
+            
+            while True:
+                # Check for command timeout
+                if time.time() - start_time > timeout:
+                    self.logger.error(f"Command '{command[:50]}' timed out after {timeout}s.")
+                    return "".join(output_lines), "Timeout"
+                
+                try:
+                    # Wait for a line from the reader thread
+                    line = self.output_queue.get(timeout=0.2)
+                    
+                    # If the boundary is in the line, we're done.
+                    if boundary in line:
+                        break
+                    
+                    # Don't include the prompt (e.g., "root@hostname:~# ") in the output
+                    if 'root@' not in line and ':~#' not in line:
+                        output_lines.append(line)
+
+                except Queue.Empty:
+                    # If the queue is empty, check if the process is still alive
+                    if self.process.poll() is not None:
+                        self.logger.error("SSH process terminated unexpectedly during command execution.")
+                        self.session_ready = False
+                        return "".join(output_lines), "SSH process terminated."
+                    continue
+
+            return "".join(output_lines), None
+            
+        except Exception as e:
+            self.logger.error(f"Error executing command '{command[:50]}': {e}", exc_info=True)
+            # Mark session as not ready if we get a broken pipe or other I/O error
+            self.session_ready = False
+            return "", f"Error: {e}"
+
+    def close(self):
+        """Closes the persistent SSH session."""
+        self.logger.info("Closing persistent SSH session.")
+        self.is_running = False
+        self.session_ready = False
+        if self.process:
             try:
-                vps_logger.debug(f"Executing command (attempt {attempt+1}/{self.max_retries}): {command[:100]}")
-                
-                ssh_cmd = [
-                    'ssh',
-                    '-o', 'StrictHostKeyChecking=no',
-                    '-o', f'ConnectTimeout={self.connection_timeout}',
-                    '-o', 'ServerAliveInterval=30',
-                    '-o', 'ServerAliveCountMax=2',
-                    '-o', 'BatchMode=yes',
-                    '-o', 'TCPKeepAlive=yes',
-                ]
-                
-                # --- PERFORMANCE BOOST (if path was created) ---
-                if self.control_path:
-                    ssh_cmd.extend([
-                        '-o', 'ControlMaster=auto',
-                        '-o', f'ControlPath={self.control_path}',
-                        '-o', 'ControlPersist=60s',
-                    ])
-                # --------------------------------------------------
-
-                ssh_cmd.extend([
-                    '-i', self.key_path,
-                    self.host,
-                    command
-                ])
-                
-                result = subprocess.run(
-                    ssh_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout,
-                    encoding='utf-8',
-                    errors='replace'
-                )
-                
-                if result.returncode == 0:
-                    vps_logger.debug(f"Command executed successfully: {len(result.stdout)} chars output")
-                    return result.stdout, None
-                else:
-                    error_msg = result.stderr.strip()
-                    vps_logger.warning(f"Command failed with code {result.returncode}: {error_msg[:100]}")
-                    
-                    if "Control socket connect" in error_msg and "No such file or directory" in error_msg:
-                         vps_logger.warning("Stale ControlMaster socket detected. Will not retry.")
-                         return "", f"Stale SSH Socket: {error_msg[:200]}"
-
-                    if attempt < self.max_retries - 1:
-                        time.sleep(self.retry_delay)
-                        continue
-                    return "", f"SSH Error: {error_msg[:200]}"
-                    
-            except subprocess.TimeoutExpired:
-                vps_logger.error(f"Command timeout after {timeout}s (attempt {attempt+1})")
-                if attempt < self.max_retries - 1:
-                    time.sleep(1)
-                    continue
-                return "", f"Timeout after {timeout}s"
-                
-            except Exception as e:
-                vps_logger.error(f"SSH execution error: {str(e)}", exc_info=True)
-                if attempt < self.max_retries - 1:
-                    time.sleep(1)
-                    continue
-                return "", f"Error: {str(e)}"
-        
-        return "", "Max retries exceeded"
-    
-    def test_connection(self):
-        """Test SSH connection - OPTIMIZED"""
-        try:
-            vps_logger.info(f"Testing SSH connection to {self.host}...")
-            
-            # Single command untuk test dan get IP sekaligus
-            result, error = self.execute('echo "OK" && hostname -I | awk \'{print $1}\'', timeout=5)
-            
-            if error:
-                vps_logger.error(f"Connection test failed: {error}")
-                return False, "Unknown"
-            
-            if "OK" in result:
-                lines = result.strip().split('\n')
-                ip = lines[1].strip() if len(lines) > 1 else "Unknown"
-                vps_logger.info(f"Connection successful to {ip}")
-                return True, ip
-            
-            vps_logger.error("Connection test failed: Invalid response")
-            return False, "Unknown"
-            
-        except Exception as e:
-            vps_logger.error(f"Connection test exception: {str(e)}", exc_info=True)
-            return False, "Unknown"
+                self.process.stdin.close()
+                self.process.stdout.close()
+            except:
+                pass # Ignore errors on close
+            self.process.terminate()
+            self.process.wait(timeout=5)
+        if self.reader and self.reader.is_alive():
+            self.reader.join()
+        self.logger.info("Session closed.")
 
 class Tooltip:
     """Enhanced Tooltip dengan styling lebih baik"""
