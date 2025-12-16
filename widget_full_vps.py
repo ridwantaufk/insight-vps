@@ -1107,7 +1107,66 @@ class VPSSecurityMonitor(ctk.CTk):
             print(f"Error fetching basic data: {e}")
             self.connection_ok = False
 
-    
+    def fetch_security_data(self):
+        """Fetch security-related data (FIXED: ONE-LINER COMMAND)"""
+        try:
+            # Gunakan sudo dan satu baris
+            cmd = (
+                "echo '---PORTS---'; "
+                "sudo ss -tuln | grep LISTEN || echo 'No ports'; "
+                "echo '---UFW---'; "
+                "sudo ufw status 2>/dev/null || echo 'UFW: not available'; "
+                "echo '---IPTABLES---'; "
+                "sudo iptables -L -n 2>/dev/null | head -n 5 || echo 'iptables: not available'; "
+                "echo '---APT---'; "
+                "apt list --upgradable 2>/dev/null | wc -l || echo '0'; "
+                "echo '---CRON---'; "
+                "crontab -l 2>/dev/null || echo 'No crontab for current user'; "
+                "echo '---LAST---'; "
+                "sudo last -n 15 -F 2>/dev/null || echo 'No login history'; "
+                "echo '---NET---'; "
+                "sudo ss -tunap | grep ESTAB || echo 'No established connections'; "
+                "echo '---SUSP---'; "
+                "sudo ps aux | grep -E 'nc |ncat |/dev/tcp|bash -i|sh -i|perl.*socket|python.*socket' | grep -v grep || echo 'No suspicious processes'; "
+                "echo '---TOP---'; "
+                "ps aux --sort=-%cpu | head -n 31 || echo 'USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND'; "
+                "echo '---FAILED---'; "
+                "sudo grep 'Failed password' /var/log/auth.log 2>/dev/null | tail -n 20 || sudo journalctl -u ssh -n 20 --no-pager 2>/dev/null | grep -i 'failed' || echo 'No failed login data available'; "
+                "echo '---END---'"
+            )
+            
+            out = self.run_ssh_command(cmd)
+            if not out:
+                return
+            
+            # ... (SISA KODE PARSING DI BAWAH INI SAMA SEPERTI SEBELUMNYA) ...
+            def get_section(name):
+                try:
+                    return out.split(f'---{name}---')[1].split('---')[0].strip()
+                except:
+                    return ""
+            
+            self.security_data['ports'] = [l.strip() for l in get_section('PORTS').split('\n') if l.strip()]
+            
+            fw_ufw = get_section('UFW')
+            self.security_data['firewall_status'] = "Active" if "active" in fw_ufw.lower() else "Inactive"
+            
+            upd = get_section('APT').strip()
+            self.security_data['updates_available'] = max(0, int(upd) - 1) if upd.isdigit() else 0
+            
+            self.security_data['cronjobs'] = [l.strip() for l in get_section('CRON').split('\n') 
+                                             if l.strip() and not l.startswith('#') and 'no crontab' not in l.lower()]
+            
+            self.security_data['last_logins'] = [l.strip() for l in get_section('LAST').split('\n') if l.strip()][:15]
+            self.security_data['network_connections'] = [l.strip() for l in get_section('NET').split('\n') if l.strip()]
+            self.security_data['suspicious_processes'] = [l.strip() for l in get_section('SUSP').split('\n') if l.strip()]
+            self.security_data['top_processes'] = [l.strip() for l in get_section('TOP').split('\n')[1:] if l.strip()]
+            self.security_data['failed_logins'] = [l.strip() for l in get_section('FAILED').split('\n') if l.strip()]
+            
+            self.after(0, self.update_security_ui)
+            
+        except Exception as e:
+            print(f"Error fetching security data: {e}")
     
     def fetch_extended_data(self):
         """Fetch extended system information"""
