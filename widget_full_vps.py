@@ -2235,11 +2235,12 @@ echo "---END---"
     def fetch_security_data(self):
         """Fetch security data"""
         try:
+            # Since we connect as root, sudo is no longer needed
             cmd = '''
             echo "---PORTS---"
-            sudo ss -tuln 2>/dev/null | grep LISTEN || echo "No ports"
+            ss -tuln 2>/dev/null | grep LISTEN || echo "No ports"
             echo "---UFW---"
-            sudo ufw status 2>/dev/null || echo "UFW: not available"
+            ufw status 2>/dev/null || echo "UFW: not available"
             echo "---APT---"
             apt list --upgradable 2>/dev/null | wc -l
             echo "---CRON---"
@@ -2247,19 +2248,19 @@ echo "---END---"
             echo "---LAST---"
             last -n 20 -F 2>/dev/null
             echo "---NET---"
-            sudo ss -tunap 2>/dev/null | grep ESTAB || echo "No connections"
+            ss -tunap 2>/dev/null | grep ESTAB || echo "No connections"
             echo "---SUSP---"
             ps aux 2>/dev/null | grep -E "nc |ncat |/dev/tcp|bash -i|sh -i|perl.*socket|python.*socket|xmrig|minerd" | grep -v grep || echo "None"
             echo "---TOP---"
             ps aux --sort=-%cpu 2>/dev/null | head -n 31
             echo "---FAILED---"
-            sudo grep "Failed password" /var/log/auth.log 2>/dev/null | tail -n 30 || echo "No failed"
+            grep "Failed password" /var/log/auth.log 2>/dev/null | tail -n 30 || echo "No failed"
             echo "---ATTACKERS---"
-            sudo lastb -n 50 -F 2>/dev/null || echo "No bad logins"
+            lastb -n 50 -F 2>/dev/null || echo "No bad logins"
             echo "---SYSLOG---"
-            sudo journalctl -n 50 --no-pager 2>/dev/null || sudo tail -n 50 /var/log/syslog 2>/dev/null || echo "No logs"
+            journalctl -n 50 --no-pager 2>/dev/null || tail -n 50 /var/log/syslog 2>/dev/null || echo "No logs"
             echo "---KERNEL---"
-            sudo dmesg | tail -n 30 2>/dev/null || echo "No kernel"
+            dmesg | tail -n 30 2>/dev/null || echo "No kernel"
             echo "---END---"
             '''
             
