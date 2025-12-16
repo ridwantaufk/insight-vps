@@ -2058,53 +2058,48 @@ class VPSSecurityMonitor(ctk.CTk):
     def quit_app(self):
         """Quit app"""
         self.running = False
-        # Properly close the persistent SSH session
         if self.ssh_manager:
             self.ssh_manager.close()
         self.destroy()
         sys.exit()
 
     def main_loop(self):
-        """Main loop for data fetching, relies on the persistent SSH manager."""
+        """Main loop with paramiko connection logic."""
         last_basic_fetch = 0
         last_security_fetch = 0
         last_extended_fetch = 0
-        
-        vps_logger.info("Starting main application loop.")
 
         while self.running:
             try:
-                current_time = time.time()
-                
-                # Check if the persistent session is active and ready
-                if self.ssh_manager.session_ready:
-                    self.after(0, self.update_status, "🟢 Connected", self.accent_green)
-                    
-                    # Fetch basic data every second
-                    if current_time - last_basic_fetch >= self.fetch_basic_interval:
-                        threading.Thread(target=self.fetch_basic_data, daemon=True).start()
-                        last_basic_fetch = current_time
-                    
-                    # Fetch security data every 10 seconds
-                    if current_time - last_security_fetch >= self.fetch_security_interval:
-                        threading.Thread(target=self.fetch_security_data, daemon=True).start()
-                        last_security_fetch = current_time
-                    
-                    # Fetch extended data every 30 seconds
-                    if current_time - last_extended_fetch >= self.fetch_extended_interval:
-                        threading.Thread(target=self.fetch_extended_data, daemon=True).start()
-                        last_extended_fetch = current_time
-                else:
-                    # If the session is not ready, display a connecting status.
-                    # The SSHConnectionManager is responsible for trying to connect.
+                if not self.ssh_manager.is_active():
                     self.after(0, self.update_status, "🔄 Connecting...", self.accent_orange)
-                    vps_logger.warning("Main loop: SSH session not ready. Waiting for manager.")
+                    if not self.ssh_manager.connect():
+                        self.after(0, self.update_status, "🔴 Failed", self.accent_red)
+                        time.sleep(5)  # Wait before retrying
+                        continue
                 
-                time.sleep(1)  # Main loop tick rate
+                # If connected, update status and fetch data
+                self.after(0, self.update_status, "🟢 Connected", self.accent_green)
+                current_time = time.time()
+
+                if current_time - last_basic_fetch >= self.fetch_basic_interval:
+                    threading.Thread(target=self.fetch_basic_data, daemon=True).start()
+                    last_basic_fetch = current_time
                 
+                if current_time - last_security_fetch >= self.fetch_security_interval:
+                    threading.Thread(target=self.fetch_security_data, daemon=True).start()
+                    last_security_fetch = current_time
+                
+                if current_time - last_extended_fetch >= self.fetch_extended_interval:
+                    threading.Thread(target=self.fetch_extended_data, daemon=True).start()
+                    last_extended_fetch = current_time
+
+                time.sleep(1)
+
             except Exception as e:
-                vps_logger.critical(f"Critical error in main_loop: {e}", exc_info=True)
-                time.sleep(5) # Avoid rapid-fire loops on critical error
+                vps_logger.error(f"Critical error in main_loop: {e}", exc_info=True)
+                if self.ssh_manager: self.ssh_manager.close()
+                time.sleep(5)
 
     def fetch_basic_data(self):
         """Fetch basic data - OPTIMIZED"""
