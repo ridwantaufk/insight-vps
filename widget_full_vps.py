@@ -10,7 +10,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import json
 import os
-from queue import Queue
+from queue import Queue, Empty
 import traceback
 import uuid # Added this import
 
