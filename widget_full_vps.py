@@ -171,15 +171,18 @@ vps_logger = VPSLogger()
 # ==============================================================================
 #                      SSH CONNECTION MANAGER
 # ==============================================================================
+# ==============================================================================
+#                      SSH CONNECTION MANAGER
+# ==============================================================================
 class SSHConnectionManager:
     """Manages SSH connections with retry logic"""
     def __init__(self, host, key_path):
-        self.host = host
+        self.host = host  # ← INI YANG KURANG
         self.key_path = key_path
-        self.max_retries = 3
-        self.retry_delay = 5
-        self.connection_timeout = 15
-        self.command_timeout = 30
+        self.max_retries = 2
+        self.retry_delay = 2
+        self.connection_timeout = 8
+        self.command_timeout = 20
         
     def execute(self, command, timeout=None):
         """Execute command with retry logic"""
@@ -193,10 +196,12 @@ class SSHConnectionManager:
                     'ssh',
                     '-o', 'StrictHostKeyChecking=no',
                     '-o', f'ConnectTimeout={self.connection_timeout}',
-                    '-o', 'ServerAliveInterval=60',
-                    '-o', 'ServerAliveCountMax=3',
+                    '-o', 'ServerAliveInterval=30',
+                    '-o', 'ServerAliveCountMax=2',
+                    '-o', 'BatchMode=yes',
+                    '-o', 'TCPKeepAlive=yes',
                     '-i', self.key_path,
-                    self.host,
+                    self.host,  # ← PAKAI self.host (bukan self.ssh_host)
                     command
                 ]
                 
@@ -214,41 +219,42 @@ class SSHConnectionManager:
                     return result.stdout, None
                 else:
                     error_msg = result.stderr.strip()
-                    vps_logger.warning(f"Command failed with code {result.returncode}: {error_msg}")
+                    vps_logger.warning(f"Command failed with code {result.returncode}: {error_msg[:100]}")
                     
                     if attempt < self.max_retries - 1:
                         time.sleep(self.retry_delay)
                         continue
-                    return "", f"SSH Error: {error_msg}"
+                    return "", f"SSH Error: {error_msg[:200]}"
                     
             except subprocess.TimeoutExpired:
                 vps_logger.error(f"Command timeout after {timeout}s (attempt {attempt+1})")
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
+                    time.sleep(1)
                     continue
                 return "", f"Timeout after {timeout}s"
                 
             except Exception as e:
                 vps_logger.error(f"SSH execution error: {str(e)}", exc_info=True)
                 if attempt < self.max_retries - 1:
-                    time.sleep(self.retry_delay)
+                    time.sleep(1)
                     continue
                 return "", f"Error: {str(e)}"
         
         return "", "Max retries exceeded"
     
     def test_connection(self):
-        """Test SSH connection"""
+        """Test SSH connection - OPTIMIZED"""
         try:
-            vps_logger.info("Testing SSH connection...")
+            vps_logger.info(f"Testing SSH connection to {self.host}...")
             
-            result, error = self.execute('echo "TEST_OK" && hostname -I | awk \'{print $1}\'', timeout=10)
+            # Single command untuk test dan get IP sekaligus
+            result, error = self.execute('echo "OK" && hostname -I | awk \'{print $1}\'', timeout=5)
             
             if error:
                 vps_logger.error(f"Connection test failed: {error}")
                 return False, "Unknown"
             
-            if "TEST_OK" in result:
+            if "OK" in result:
                 lines = result.strip().split('\n')
                 ip = lines[1].strip() if len(lines) > 1 else "Unknown"
                 vps_logger.info(f"Connection successful to {ip}")
@@ -346,7 +352,7 @@ class VPSSecurityMonitor(ctk.CTk):
         self.connection_ok = False
         self.is_resizing = False
         self.connection_retry_count = 0
-        self.max_connection_retries = 5
+        self.max_connection_retries = 3
         
         # Command queue for terminal
         self.command_queue = Queue()
@@ -374,11 +380,22 @@ class VPSSecurityMonitor(ctk.CTk):
 
         # --- Data Storage ---
         self.security_data = {
-            'ports': [], 'suspicious_processes': [], 'cronjobs': [], 
-            'last_logins': [], 'firewall_status': '', 'updates_available': 0, 
-            'disk_usage': {}, 'network_connections': [], 'active_services': [], 
-            'failed_logins': [], 'docker_containers': [], 'ssl_certs': [],
-            'attackers': [], 'syslog': [], 'kernel_logs': [], 'top_processes': []
+            'ports': ['tcp LISTEN 0.0.0.0:22', 'tcp LISTEN 0.0.0.0:80'], 
+            'suspicious_processes': [], 
+            'cronjobs': [], 
+            'last_logins': ['Loading...'], 
+            'firewall_status': 'Checking...', 
+            'updates_available': 0, 
+            'disk_usage': {'percentage': '0'}, 
+            'network_connections': [], 
+            'active_services': [], 
+            'failed_logins': [], 
+            'docker_containers': [], 
+            'ssl_certs': [],
+            'attackers': [], 
+            'syslog': [], 
+            'kernel_logs': [], 
+            'top_processes': []
         }
         self.last_cpu = 0
         self.cpu_cores = 1
@@ -398,7 +415,10 @@ class VPSSecurityMonitor(ctk.CTk):
         
         # Real-time stats
         self.last_update_time = None
-        self.update_interval = 2  # seconds
+        self.update_interval = 1  # KURANGI dari 2 ke 1 detik untuk lebih realtime
+        self.fetch_basic_interval = 1  # Every 1 second
+        self.fetch_security_interval = 10  # Every 10 seconds (bukan 30)
+        self.fetch_extended_interval = 30  # Every 30 seconds (bukan 60)
 
         # --- Modern Colors (Windows 11 Mica-inspired) ---
         self.bg_primary = "#0f0f14"
@@ -667,6 +687,8 @@ class VPSSecurityMonitor(ctk.CTk):
 
     def _create_expanded_ui(self):
         """Full dashboard view - COMPLETELY FIXED"""
+        vps_logger.info("Creating expanded UI")
+        
         # Reset window properties
         self.overrideredirect(False)
         self.attributes('-topmost', False)
@@ -727,13 +749,14 @@ class VPSSecurityMonitor(ctk.CTk):
         )
         self.lbl_last_update.pack(anchor="w", pady=(3, 0))
         
-        # Control buttons
+        # Control buttons - PERBAIKI BAGIAN INI
         btn_container = ctk.CTkFrame(title_container, fg_color="transparent")
         btn_container.pack(side="right", fill="y")
         
         btn_frame = ctk.CTkFrame(btn_container, fg_color="transparent")
         btn_frame.pack(expand=True)
         
+        # Button Minimize
         btn_minimize = ctk.CTkButton(
             btn_frame, text="−", width=45, height=40, corner_radius=10,
             fg_color=self.bg_tertiary, hover_color=self.accent_blue,
@@ -743,6 +766,7 @@ class VPSSecurityMonitor(ctk.CTk):
         btn_minimize.pack(side="left", padx=3)
         Tooltip(btn_minimize, "Minimize window")
         
+        # Button Maximize
         btn_maximize = ctk.CTkButton(
             btn_frame, text="⛶", width=45, height=40, corner_radius=10,
             fg_color=self.bg_tertiary, hover_color=self.accent_purple,
@@ -752,6 +776,7 @@ class VPSSecurityMonitor(ctk.CTk):
         btn_maximize.pack(side="left", padx=3)
         Tooltip(btn_maximize, "Maximize/Restore")
         
+        # Button Refresh
         btn_refresh = ctk.CTkButton(
             btn_frame, text="🔄", width=45, height=40, corner_radius=10,
             fg_color=self.accent_green, hover_color="#22c55e",
@@ -761,6 +786,17 @@ class VPSSecurityMonitor(ctk.CTk):
         btn_refresh.pack(side="left", padx=3)
         Tooltip(btn_refresh, "Force refresh semua data")
         
+        # Button Reconnect
+        btn_reconnect = ctk.CTkButton(
+            btn_frame, text="🔌", width=45, height=40, corner_radius=10,
+            fg_color=self.accent_orange, hover_color="#f97316",
+            command=self.force_reconnect, font=("Segoe UI", 15),
+            cursor="hand2"
+        )
+        btn_reconnect.pack(side="left", padx=3)
+        Tooltip(btn_reconnect, "Force reconnect to VPS")
+        
+        # Button Compact
         btn_compact = ctk.CTkButton(
             btn_frame, text="📉", width=45, height=40, corner_radius=10,
             fg_color=self.bg_tertiary, hover_color=self.accent_orange,
@@ -856,7 +892,8 @@ class VPSSecurityMonitor(ctk.CTk):
             ("🌐 Network", "network"),
             ("⏰ Cron", "cron"),
             ("🐳 Docker", "docker"),
-            ("📜 Logs", "logs")
+            ("📜 Logs", "logs"),
+            ("💻 Terminal", "terminal")
         ]
         
         for text, tab_id in tabs:
@@ -881,10 +918,10 @@ class VPSSecurityMonitor(ctk.CTk):
         self.tab_content.pack(fill="both", expand=True)
         
         # Summary cards
-        summary_frame = ctk.CTkFrame(self.tab_content, fg_color="transparent")
-        summary_frame.pack(fill="x", padx=20, pady=(20, 12))
+        self.summary_frame = ctk.CTkFrame(self.tab_content, fg_color="transparent")
+        self.summary_frame.pack(fill="x", padx=20, pady=(20, 12))
         
-        self._create_summary_cards(summary_frame)
+        self._create_summary_cards(self.summary_frame)
         
         # Tab textbox - FIXED TO FILL
         self.tab_textbox = ctk.CTkTextbox(
@@ -1025,6 +1062,207 @@ class VPSSecurityMonitor(ctk.CTk):
             text_color=self.text_secondary
         )
         self.lbl_system_summary.pack(pady=(0, 12))
+
+    def _create_command_terminal(self, parent):
+        """Create command terminal widget"""
+        term_frame = ctk.CTkFrame(parent, fg_color=self.bg_tertiary, corner_radius=14)
+        term_frame.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        
+        # Header
+        header = ctk.CTkFrame(term_frame, fg_color="transparent", height=45)
+        header.pack(fill="x", padx=20, pady=(15, 10))
+        header.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            header, text="💻 COMMAND TERMINAL", 
+            font=("Segoe UI Semibold", 13), 
+            text_color=self.accent_green
+        ).pack(side="left")
+        
+        # Quick actions
+        actions_frame = ctk.CTkFrame(header, fg_color="transparent")
+        actions_frame.pack(side="right")
+        
+        quick_actions = [
+            ("🔄 Update", "sudo apt update && sudo apt upgrade -y"),
+            ("🔥 UFW Status", "sudo ufw status verbose"),
+            ("🔍 Who", "who"),
+            ("📊 Top", "top -bn1 | head -20"),
+            ("🌐 Netstat", "sudo netstat -tulnp"),
+            ("🔒 Fail2ban", "sudo fail2ban-client status"),
+        ]
+        
+        for label, cmd in quick_actions:
+            btn = ctk.CTkButton(
+                actions_frame, text=label, width=90, height=30,
+                fg_color=self.bg_primary, hover_color=self.accent_blue,
+                command=lambda c=cmd: self.execute_quick_command(c),
+                font=("Segoe UI", 9), corner_radius=6
+            )
+            btn.pack(side="left", padx=3)
+            Tooltip(btn, f"Execute: {cmd}")
+        
+        # Output area
+        self.term_output = ctk.CTkTextbox(
+            term_frame,
+            font=("Consolas", 10),
+            fg_color=self.bg_primary,
+            text_color=self.accent_green,
+            wrap="none",
+            height=300
+        )
+        self.term_output.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        
+        # Input area
+        input_frame = ctk.CTkFrame(term_frame, fg_color="transparent", height=50)
+        input_frame.pack(fill="x", padx=20, pady=(0, 15))
+        input_frame.pack_propagate(False)
+        
+        ctk.CTkLabel(
+            input_frame, text="$", 
+            font=("Consolas", 14, "bold"), 
+            text_color=self.accent_green,
+            width=30
+        ).pack(side="left")
+        
+        self.term_input = ctk.CTkEntry(
+            input_frame,
+            placeholder_text="Enter command here...",
+            font=("Consolas", 11),
+            fg_color=self.bg_primary,
+            border_color=self.accent_blue,
+            border_width=2,
+            height=40
+        )
+        self.term_input.pack(side="left", fill="both", expand=True, padx=(5, 10))
+        self.term_input.bind("<Return>", lambda e: self.execute_terminal_command())
+        self.term_input.bind("<Up>", self.navigate_history_up)
+        self.term_input.bind("<Down>", self.navigate_history_down)
+        
+        btn_exec = ctk.CTkButton(
+            input_frame, text="▶ Execute", width=100, height=40,
+            fg_color=self.accent_green, hover_color="#22c55e",
+            command=self.execute_terminal_command,
+            font=("Segoe UI Semibold", 11)
+        )
+        btn_exec.pack(side="right")
+        
+        btn_clear = ctk.CTkButton(
+            input_frame, text="🗑️", width=40, height=40,
+            fg_color=self.bg_primary, hover_color=self.accent_red,
+            command=self.clear_terminal,
+            font=("Segoe UI", 14)
+        )
+        btn_clear.pack(side="right", padx=(0, 5))
+        Tooltip(btn_clear, "Clear terminal")
+        
+        # Store reference
+        self.terminal_frame = term_frame
+
+    def execute_quick_command(self, command):
+        """Execute quick command"""
+        vps_logger.info(f"Quick command executed: {command}")
+        self.command_queue.put(command)
+        
+        if hasattr(self, 'term_output'):
+            self.term_output.configure(state="normal")
+            self.term_output.insert("end", f"\n$ {command}\n")
+            self.term_output.insert("end", "⏳ Executing...\n")
+            self.term_output.configure(state="disabled")
+            self.term_output.see("end")
+
+    def execute_terminal_command(self):
+        """Execute terminal command"""
+        if not hasattr(self, 'term_input'):
+            return
+        
+        command = self.term_input.get().strip()
+        if not command:
+            return
+        
+        vps_logger.info(f"Terminal command executed: {command}")
+        
+        self.command_history.append(command)
+        self.command_queue.put(command)
+        
+        if hasattr(self, 'term_output'):
+            self.term_output.configure(state="normal")
+            self.term_output.insert("end", f"\n$ {command}\n")
+            self.term_output.insert("end", "⏳ Executing...\n")
+            self.term_output.configure(state="disabled")
+            self.term_output.see("end")
+        
+        self.term_input.delete(0, "end")
+
+    def navigate_history_up(self, event):
+        """Navigate command history up"""
+        if self.command_history:
+            self.term_input.delete(0, "end")
+            self.term_input.insert(0, self.command_history[-1])
+
+    def navigate_history_down(self, event):
+        """Navigate command history down"""
+        self.term_input.delete(0, "end")
+
+    def clear_terminal(self):
+        """Clear terminal output"""
+        if hasattr(self, 'term_output'):
+            self.term_output.configure(state="normal")
+            self.term_output.delete("1.0", "end")
+            self.term_output.insert("1.0", "💻 Terminal Ready\n" + "="*80 + "\n")
+            self.term_output.configure(state="disabled")
+
+    def process_commands(self):
+        """Process command queue"""
+        while self.running:
+            try:
+                if not self.command_queue.empty():
+                    command = self.command_queue.get()
+                    
+                    vps_logger.info(f"Processing command: {command}")
+                    
+                    result, error = self.ssh_manager.execute(command, timeout=60)
+                    
+                    if hasattr(self, 'term_output'):
+                        self.after(0, self._display_command_result, command, result, error)
+                    
+                    self.command_results.append({
+                        'command': command,
+                        'result': result,
+                        'error': error,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    
+                    # Save to log
+                    if error:
+                        vps_logger.error(f"Command '{command}' failed: {error}")
+                    else:
+                        vps_logger.info(f"Command '{command}' completed successfully")
+                
+                time.sleep(0.1)
+                
+            except Exception as e:
+                vps_logger.error(f"Command processor error: {str(e)}", exc_info=True)
+
+    def _display_command_result(self, command, result, error):
+        """Display command result in terminal"""
+        if not hasattr(self, 'term_output'):
+            return
+        
+        try:
+            self.term_output.configure(state="normal")
+            
+            if error:
+                self.term_output.insert("end", f"❌ ERROR: {error}\n\n")
+            else:
+                self.term_output.insert("end", result if result else "(no output)\n")
+                self.term_output.insert("end", "\n✅ Command completed\n")
+            
+            self.term_output.insert("end", "─"*80 + "\n")
+            self.term_output.configure(state="disabled")
+            self.term_output.see("end")
+        except Exception as e:
+            vps_logger.error(f"Display result error: {str(e)}")
 
     def get_process_info(self, proc_name):
         """Get process information in Indonesian"""
@@ -1196,15 +1434,79 @@ class VPSSecurityMonitor(ctk.CTk):
     def switch_tab(self, tab_id):
         """Switch tabs"""
         self.active_tab = tab_id
+        
+        # Update button colors
         for tid, btn in self.tab_buttons.items():
             btn.configure(
                 fg_color=self.accent_blue if tid == tab_id else self.bg_tertiary
             )
-        self.update_tab_content()
+        
+        if tab_id == "terminal":
+            # Show terminal
+            try:
+                # Hide textbox and summary if exists
+                if hasattr(self, 'tab_textbox') and self.tab_textbox.winfo_exists():
+                    self.tab_textbox.pack_forget()
+                if hasattr(self, 'summary_frame') and self.summary_frame.winfo_exists():
+                    self.summary_frame.pack_forget()
+                
+                # Show or create terminal
+                if not hasattr(self, 'terminal_frame') or not self.terminal_frame.winfo_exists():
+                    # Bersihkan tab_content dulu
+                    for widget in self.tab_content.winfo_children():
+                        widget.pack_forget()
+                    
+                    # Create new terminal
+                    self._create_command_terminal(self.tab_content)
+                else:
+                    # Show existing terminal
+                    self.terminal_frame.pack(fill="both", expand=True)
+            except Exception as e:
+                vps_logger.error(f"Error showing terminal: {str(e)}", exc_info=True)
+        else:
+            # Show normal tab content
+            try:
+                # Hide terminal if exists
+                if hasattr(self, 'terminal_frame') and self.terminal_frame.winfo_exists():
+                    self.terminal_frame.pack_forget()
+                
+                # Show or create summary frame
+                if not hasattr(self, 'summary_frame') or not self.summary_frame.winfo_exists():
+                    summary_frame = ctk.CTkFrame(self.tab_content, fg_color="transparent")
+                    summary_frame.pack(fill="x", padx=20, pady=(20, 12))
+                    self.summary_frame = summary_frame
+                    self._create_summary_cards(summary_frame)
+                else:
+                    self.summary_frame.pack(fill="x", padx=20, pady=(20, 12))
+                
+                # Show or create textbox
+                if not hasattr(self, 'tab_textbox') or not self.tab_textbox.winfo_exists():
+                    self.tab_textbox = ctk.CTkTextbox(
+                        self.tab_content, 
+                        font=("Consolas", 10), 
+                        fg_color=self.bg_tertiary, 
+                        text_color=self.text_primary,
+                        wrap="none"
+                    )
+                    self.tab_textbox.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+                else:
+                    self.tab_textbox.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+                
+                # Update content
+                self.update_tab_content()
+                
+            except Exception as e:
+                vps_logger.error(f"Error showing tab content: {str(e)}", exc_info=True)
 
     def update_tab_content(self):
         """Update tab content with better formatting"""
         if not self.is_expanded or not hasattr(self, 'tab_textbox'):
+            return
+        
+        try:
+            if not self.tab_textbox.winfo_exists():
+                return
+        except:
             return
         
         content = ""
@@ -1242,10 +1544,19 @@ class VPSSecurityMonitor(ctk.CTk):
         elif self.active_tab == "logs":
             content += self._format_logs_tab()
         
-        self.tab_textbox.configure(state="normal")
-        self.tab_textbox.delete("1.0", "end")
-        self.tab_textbox.insert("1.0", content if content else "Memuat data...")
-        self.tab_textbox.configure(state="disabled")
+        try:
+            self.tab_textbox.configure(state="normal")
+            self.tab_textbox.delete("1.0", "end")
+            
+            if content:
+                self.tab_textbox.insert("1.0", content)
+            else:
+                # Default content jika kosong
+                self.tab_textbox.insert("1.0", "⏳ Memuat data...\n\nMenghubungkan ke VPS dan mengambil informasi.\nMohon tunggu beberapa saat.")
+            
+            self.tab_textbox.configure(state="disabled")
+        except Exception as e:
+            vps_logger.error(f"Error updating tab content: {str(e)}", exc_info=True)
 
     def _format_security_tab(self):
         """Format security tab dengan analisis lengkap"""
@@ -1668,8 +1979,31 @@ class VPSSecurityMonitor(ctk.CTk):
             # Fallback manual maximize
             self.geometry(f"{screen_width}x{screen_height}+0+0")
         
+        # Update UI dengan data yang ada
         self.after(100, self.update_ui_with_latest_data)
-        threading.Thread(target=self.fetch_security_data, daemon=True).start()
+        
+        # Fetch fresh data
+        self.after(200, lambda: threading.Thread(target=self._fetch_all_on_expand, daemon=True).start())
+
+    def _fetch_all_on_expand(self):
+        """Fetch all data when expanding"""
+        try:
+            vps_logger.info("Fetching all data after expand")
+            
+            # Fetch basic first
+            self.fetch_basic_data()
+            time.sleep(0.3)
+            
+            # Then security
+            self.fetch_security_data()
+            time.sleep(0.3)
+            
+            # Finally extended
+            self.fetch_extended_data()
+            
+            vps_logger.info("All data fetched successfully")
+        except Exception as e:
+            vps_logger.error(f"Error fetching data on expand: {str(e)}", exc_info=True)
 
     def _finish_compact(self):
         """Finish compacting"""
@@ -1833,153 +2167,196 @@ class VPSSecurityMonitor(ctk.CTk):
         sys.exit()
 
     def main_loop(self):
-        """Main loop"""
+        """Main loop with retry logic"""
         iteration = 0
+        last_basic_fetch = 0
+        last_security_fetch = 0
+        last_extended_fetch = 0
         
         while self.running:
-            if not self.connection_ok:
-                self.after(0, self.update_status, "🟡 Connecting...", self.accent_orange)
-                if self.test_connection():
-                    self.connection_ok = True
-                    self.after(0, self.update_status, "🟢 Connected", self.accent_green)
-                else:
-                    self.after(0, self.update_status, "🔴 Connection Failed", self.accent_red)
-                    time.sleep(10)
-                    continue
-            
-            self.fetch_basic_data()
-            
-            if iteration % 15 == 0:
-                self.fetch_security_data()
-            
-            if iteration % 30 == 0:
-                self.fetch_extended_data()
-            
-            iteration += 1
-            time.sleep(2)
+            try:
+                current_time = time.time()
+                
+                # Connection check
+                if not self.connection_ok:
+                    self.after(0, self.update_status, "🟡 Connecting...", self.accent_orange)
+                    vps_logger.info(f"Attempting connection (retry {self.connection_retry_count}/{self.max_connection_retries})")
+                    
+                    if self.test_connection():
+                        self.connection_ok = True
+                        self.after(0, self.update_status, "🟢 Connected", self.accent_green)
+                        vps_logger.info(f"Successfully connected to {self.vps_ip}")
+                        # Reset timers setelah reconnect
+                        last_basic_fetch = 0
+                        last_security_fetch = 0
+                        last_extended_fetch = 0
+                    else:
+                        self.after(0, self.update_status, 
+                                 f"🔴 Retry {self.connection_retry_count}/{self.max_connection_retries}", 
+                                 self.accent_red)
+                        
+                        if self.connection_retry_count >= self.max_connection_retries:
+                            vps_logger.critical("Max connection retries reached, waiting 30s")
+                            wait_time = 30  # KURANGI dari 60
+                            self.connection_retry_count = 0  # Reset counter
+                        else:
+                            wait_time = 5  # KURANGI dari 10
+                        
+                        time.sleep(wait_time)
+                        continue
+                
+                # Fetch basic data setiap 1 detik
+                if current_time - last_basic_fetch >= self.fetch_basic_interval:
+                    threading.Thread(target=self.fetch_basic_data, daemon=True).start()
+                    last_basic_fetch = current_time
+                
+                # Fetch security data setiap 10 detik
+                if current_time - last_security_fetch >= self.fetch_security_interval:
+                    threading.Thread(target=self.fetch_security_data, daemon=True).start()
+                    last_security_fetch = current_time
+                
+                # Fetch extended data setiap 30 detik
+                if current_time - last_extended_fetch >= self.fetch_extended_interval:
+                    threading.Thread(target=self.fetch_extended_data, daemon=True).start()
+                    last_extended_fetch = current_time
+                
+                iteration += 1
+                time.sleep(0.5)  # Sleep lebih pendek untuk responsive
+                
+            except Exception as e:
+                vps_logger.error(f"Main loop error: {str(e)}", exc_info=True)
+                time.sleep(2)
 
     def fetch_basic_data(self):
-        """Fetch basic data"""
+        """Fetch basic data - OPTIMIZED"""
+        if not self.connection_ok:
+            return
+        
         try:
+            # Command yang lebih efisien - hapus 2>/dev/null yang tidak perlu
             cmd = '''
-            echo "---CPU---"
-            mpstat 1 1 2>/dev/null | tail -1 | awk '{print 100-$NF}' || top -bn1 | grep "Cpu(s)" | awk '{print $2}' 2>/dev/null || echo "0.0"
-            echo "---CPUCORES---"
-            nproc 2>/dev/null || echo "1"
-            echo "---RAM---"
-            free -m 2>/dev/null
-            echo "---DISK---"
-            df -h / 2>/dev/null | tail -n1
-            echo "---UPTIME---"
-            uptime -p 2>/dev/null || echo "unknown"
-            echo "---LOAD---"
-            uptime 2>/dev/null | awk -F"load average:" "{print \\$2}"
-            echo "---SWAP---"
-            free -m 2>/dev/null | grep Swap
-            echo "---NET---"
-            cat /proc/net/dev 2>/dev/null | grep -E "eth0|ens|enp|wlan" | head -n1
-            echo "---PS---"
-            ps -eo comm,%cpu,%mem --sort=-%cpu 2>/dev/null | head -n 10
-            echo "---END---"
+echo "---CPU---"
+top -bn1 | grep "Cpu(s)" | awk '{print 100-$8}'
+echo "---CORES---"
+nproc
+echo "---RAM---"
+free -m | grep Mem
+echo "---DISK---"
+df -h / | tail -n1
+echo "---UPTIME---"
+uptime -p 2>/dev/null || uptime
+echo "---LOAD---"
+cat /proc/loadavg | awk '{print $1,$2,$3}'
+echo "---SWAP---"
+free -m | grep Swap
+echo "---NET---"
+cat /proc/net/dev | grep -E "eth0|ens|enp" | head -n1
+echo "---PS---"
+ps -eo comm,%cpu,%mem --sort=-%cpu | head -n 11
+echo "---END---"
             '''
             
-            out = self.run_ssh_command(cmd)
-            if not out:
+            result, error = self.ssh_manager.execute(cmd, timeout=10)
+            
+            if error:
+                vps_logger.warning(f"fetch_basic_data failed: {error}")
                 self.connection_ok = False
                 return
             
-            # Parse data
+            if not result:
+                return
+            
+            # Parse dengan error handling minimal
             try:
-                cpu_sec = out.split("---CPU---")[1].split("---CPUCORES---")[0].strip()
-                cpu = float(re.findall(r'[\d.]+', cpu_sec.replace(',', '.'))[0]) if cpu_sec else 0.0
-            except:
-                cpu = 0.0
-            
-            try:
-                cores_sec = out.split("---CPUCORES---")[1].split("---RAM---")[0].strip()
-                cpu_cores = int(cores_sec) if cores_sec.isdigit() else 1
-            except:
-                cpu_cores = 1
-            
-            try:
-                ram_sec = out.split("---RAM---")[1].split("---DISK---")[0].strip()
-                ram_lines = [l for l in ram_sec.split('\n') if 'Mem:' in l]
-                if ram_lines:
-                    ram_data = ram_lines[0].split()
-                    ram_total = int(ram_data[1])
-                    ram_used = int(ram_data[2])
-                    ram_available = int(ram_data[6] if len(ram_data) > 6 else ram_data[1])
-                    ram_pct = ram_used / ram_total if ram_total > 0 else 0
-                else:
-                    ram_total = ram_used = ram_available = 0
-                    ram_pct = 0.0
-            except:
-                ram_total = ram_used = ram_available = 0
-                ram_pct = 0.0
-            
-            try:
-                disk_sec = out.split("---DISK---")[1].split("---UPTIME---")[0].strip().split()
-                disk_pct = disk_sec[4].replace('%', '') if len(disk_sec) > 4 else "0"
-            except:
-                disk_pct = "0"
-            
-            try:
-                uptime_sec = out.split("---UPTIME---")[1].split("---LOAD---")[0].strip().replace('up ', '')
-            except:
-                uptime_sec = "unknown"
-            
-            try:
-                load_sec = out.split("---LOAD---")[1].split("---SWAP---")[0].strip()
-            except:
-                load_sec = "0.00, 0.00, 0.00"
-            
-            try:
-                swap_sec = out.split("---SWAP---")[1].split("---NET---")[0].strip()
-                swap_data = swap_sec.split()
-                swap_total = int(swap_data[1]) if len(swap_data) > 1 else 0
-                swap_used = int(swap_data[2]) if len(swap_data) > 2 else 0
-            except:
-                swap_total = swap_used = 0
-            
-            try:
-                net_sec = out.split("---NET---")[1].split("---PS---")[0].strip()
-                if net_sec:
-                    net_parts = net_sec.split()
-                    if len(net_parts) >= 10:
-                        rx_bytes = int(net_parts[1])
-                        tx_bytes = int(net_parts[9])
-                        self.network_stats = {
-                            'rx': round(rx_bytes / 1024 / 1024, 2),
-                            'tx': round(tx_bytes / 1024 / 1024, 2)
-                        }
-            except:
-                pass
-            
-            try:
-                ps_sec = out.split("---PS---")[1].split("---END---")[0].strip().split('\n')[1:]
-                proc_list = [l.strip() for l in ps_sec if l.strip()]
-            except:
-                proc_list = []
-            
-            # Update cache
-            self.last_cpu = cpu
-            self.cpu_cores = cpu_cores
-            self.last_ram_used = ram_used
-            self.last_ram_total = ram_total
-            self.last_ram_available = ram_available
-            self.last_ram_pct = ram_pct
-            self.last_proc_list = proc_list
-            self.last_uptime = uptime_sec
-            self.last_load_avg = load_sec.strip()
-            self.last_swap_used = swap_used
-            self.last_swap_total = swap_total
-            
-            self.security_data['disk_usage'] = {'percentage': disk_pct}
-            
-            self.after(0, self.update_ui_with_latest_data)
+                sections = {}
+                current_section = None
+                for line in result.split('\n'):
+                    if line.startswith('---') and line.endswith('---'):
+                        current_section = line.strip('-')
+                        sections[current_section] = []
+                    elif current_section:
+                        sections[current_section].append(line)
+                
+                # CPU
+                cpu_val = 0.0
+                if 'CPU' in sections and sections['CPU']:
+                    try:
+                        cpu_str = sections['CPU'][0].strip()
+                        cpu_val = float(cpu_str) if cpu_str else 0.0
+                    except:
+                        pass
+                self.last_cpu = cpu_val
+                
+                # Cores
+                if 'CORES' in sections and sections['CORES']:
+                    try:
+                        self.cpu_cores = int(sections['CORES'][0].strip())
+                    except:
+                        pass
+                
+                # RAM
+                if 'RAM' in sections and sections['RAM']:
+                    try:
+                        ram_line = sections['RAM'][0].strip().split()
+                        if len(ram_line) >= 7:
+                            self.last_ram_total = int(ram_line[1])
+                            self.last_ram_used = int(ram_line[2])
+                            self.last_ram_available = int(ram_line[6])
+                            self.last_ram_pct = self.last_ram_used / self.last_ram_total if self.last_ram_total > 0 else 0
+                    except:
+                        pass
+                
+                # DISK
+                if 'DISK' in sections and sections['DISK']:
+                    try:
+                        disk_line = sections['DISK'][0].strip().split()
+                        if len(disk_line) >= 5:
+                            self.security_data['disk_usage'] = {'percentage': disk_line[4].replace('%', '')}
+                    except:
+                        pass
+                
+                # UPTIME
+                if 'UPTIME' in sections and sections['UPTIME']:
+                    self.last_uptime = sections['UPTIME'][0].strip().replace('up ', '')
+                
+                # LOAD
+                if 'LOAD' in sections and sections['LOAD']:
+                    self.last_load_avg = sections['LOAD'][0].strip()
+                
+                # SWAP
+                if 'SWAP' in sections and sections['SWAP']:
+                    try:
+                        swap_line = sections['SWAP'][0].strip().split()
+                        if len(swap_line) >= 3:
+                            self.last_swap_total = int(swap_line[1])
+                            self.last_swap_used = int(swap_line[2])
+                    except:
+                        pass
+                
+                # NETWORK
+                if 'NET' in sections and sections['NET']:
+                    try:
+                        net_line = sections['NET'][0].strip().split()
+                        if len(net_line) >= 10:
+                            self.network_stats = {
+                                'rx': round(int(net_line[1]) / 1024 / 1024, 2),
+                                'tx': round(int(net_line[9]) / 1024 / 1024, 2)
+                            }
+                    except:
+                        pass
+                
+                # PROCESSES
+                if 'PS' in sections:
+                    self.last_proc_list = [l.strip() for l in sections['PS'][1:] if l.strip()]
+                
+                # Update UI
+                self.after(0, self.update_ui_with_latest_data)
+                
+            except Exception as e:
+                vps_logger.error(f"Parse error in fetch_basic_data: {str(e)}")
             
         except Exception as e:
-            print(f"Error: {e}")
+            vps_logger.error(f"fetch_basic_data exception: {str(e)}", exc_info=True)
             self.connection_ok = False
 
     def fetch_security_data(self):
@@ -2318,13 +2695,69 @@ class VPSSecurityMonitor(ctk.CTk):
             pass
 
     def force_refresh(self):
-        """Force refresh all data"""
-        if not self.connection_ok:
-            self.after(0, self.update_status, "🔄 Reconnecting...", self.accent_orange)
-            threading.Thread(target=self._do_force_refresh, daemon=True).start()
-        else:
-            self.after(0, self.update_status, "🔄 Refreshing...", self.accent_blue)
-            threading.Thread(target=self._do_force_refresh, daemon=True).start()
+        """Force refresh all data - OPTIMIZED"""
+        if not self.is_expanded:
+            return
+        
+        vps_logger.info("Force refresh triggered")
+        self.after(0, self.update_status, "🔄 Refreshing...", self.accent_blue)
+        
+        # Jalankan semua fetch secara parallel
+        def do_refresh():
+            threads = []
+            
+            # Test connection dulu
+            if not self.connection_ok:
+                success, ip = self.ssh_manager.test_connection()
+                if success:
+                    self.connection_ok = True
+                    self.vps_ip = ip
+                    self.connection_retry_count = 0
+                else:
+                    self.after(0, self.update_status, "🔴 Connection Failed", self.accent_red)
+                    return
+            
+            # Parallel fetch
+            t1 = threading.Thread(target=self.fetch_basic_data, daemon=True)
+            t2 = threading.Thread(target=self.fetch_security_data, daemon=True)
+            t3 = threading.Thread(target=self.fetch_extended_data, daemon=True)
+            
+            threads = [t1, t2, t3]
+            for t in threads:
+                t.start()
+            
+            # Wait max 10 seconds
+            for t in threads:
+                t.join(timeout=10)
+            
+            if self.connection_ok:
+                self.after(0, self.update_status, "✅ Refreshed", self.accent_green)
+                self.after(2000, lambda: self.update_status("🟢 Connected", self.accent_green))
+            else:
+                self.after(0, self.update_status, "🔴 Connection Failed", self.accent_red)
+        
+        threading.Thread(target=do_refresh, daemon=True).start()
+
+    def force_reconnect(self):
+        """Force reconnect"""
+        vps_logger.info("Force reconnect triggered")
+        self.connection_ok = False
+        self.connection_retry_count = 0
+        self.after(0, self.update_status, "🔄 Reconnecting...", self.accent_orange)
+        
+        def do_reconnect():
+            success, ip = self.ssh_manager.test_connection()
+            if success:
+                self.connection_ok = True
+                self.vps_ip = ip
+                self.after(0, self.update_status, "🟢 Connected", self.accent_green)
+                # Immediate refresh setelah reconnect
+                self.fetch_basic_data()
+                self.fetch_security_data()
+            else:
+                self.after(0, self.update_status, "🔴 Failed", self.accent_red)
+        
+        threading.Thread(target=do_reconnect, daemon=True).start()
 
     def _do_force_refresh(self):
         """Do force refresh"""
