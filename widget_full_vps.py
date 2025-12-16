@@ -12,6 +12,7 @@ import json
 import os
 from queue import Queue
 import traceback
+import uuid # Added this import
 
 # ==============================================================================
 #                      KONFIGURASI SSH
