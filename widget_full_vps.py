@@ -382,22 +382,17 @@ class VPSSecurityMonitor(ctk.CTk):
         
         # --- Config ---
         self.ssh_host = SSH_HOST
-        self.ssh_key = SSH_KEY
         self.vps_ip = "Unknown"
         
-        # SSH Connection Manager
-        self.ssh_manager = SSHConnectionManager(self.ssh_host, self.ssh_key)
+        # SSH Connection Manager (New persistent session implementation)
+        self.ssh_manager = SSHConnectionManager(self.ssh_host, vps_logger)
         
         # --- State ---
-        self.is_ip_blurred = True
         self.is_expanded = False
         self.running = True
         self.is_dragging = False
         self.is_maximized = False
-        self.connection_ok = False
         self.is_resizing = False
-        self.connection_retry_count = 0
-        self.max_connection_retries = 3
         
         # Command queue for terminal
         self.command_queue = Queue()
