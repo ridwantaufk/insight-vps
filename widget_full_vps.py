@@ -238,6 +238,68 @@ class SSHConnectionManager:
             self.logger.error(f"Error executing command '{command[:50]}': {e}", exc_info=True)
             self.close() # Close connection on significant error
             return "", str(e)
+class Tooltip:
+    """Enhanced Tooltip dengan styling lebih baik"""
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip = None
+        self.after_id = None
+        self.widget.bind("<Enter>", self.schedule_show)
+        self.widget.bind("<Leave>", self.hide)
+    
+    def schedule_show(self, event=None):
+        if self.after_id:
+            self.widget.after_cancel(self.after_id)
+        self.after_id = self.widget.after(500, lambda: self.show(event))
+    
+    def show(self, event=None):
+        if self.tooltip or not self.text:
+            return
+        
+        try:
+            x = self.widget.winfo_rootx() + 20
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+            
+            self.tooltip = ctk.CTkToplevel(self.widget)
+            self.tooltip.wm_overrideredirect(True)
+            self.tooltip.wm_geometry(f"+{x}+{y}")
+            self.tooltip.attributes('-alpha', 0.96)
+            self.tooltip.attributes('-topmost', True)
+            
+            # Shadow effect dengan frame tambahan
+            shadow = ctk.CTkFrame(
+                self.tooltip,
+                fg_color="#000000",
+                corner_radius=10
+            )
+            shadow.pack(padx=2, pady=2)
+            
+            label = ctk.CTkLabel(
+                shadow,
+                text=self.text,
+                fg_color=("#2a2a3a", "#1a1a2a"),
+                corner_radius=8,
+                padx=14,
+                pady=10,
+                font=("Segoe UI", 10),
+                text_color="#f1f5f9"
+            )
+            label.pack()
+        except:
+            pass
+    
+    def hide(self, event=None):
+        if self.after_id:
+            self.widget.after_cancel(self.after_id)
+            self.after_id = None
+        if self.tooltip:
+            try:
+                self.tooltip.destroy()
+            except:
+                pass
+            self.tooltip = None
+
 class VPSSecurityMonitor(ctk.CTk):
     def __init__(self):
         super().__init__()
