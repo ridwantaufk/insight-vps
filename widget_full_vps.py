@@ -2710,80 +2710,53 @@ echo "---END---"
             pass
 
     def force_refresh(self):
-        """Force refresh all data - OPTIMIZED"""
+        """Force refresh all data using the persistent session."""
         if not self.is_expanded:
             return
         
         vps_logger.info("Force refresh triggered")
         self.after(0, self.update_status, "🔄 Refreshing...", self.accent_blue)
         
-        # Jalankan semua fetch secara parallel
         def do_refresh():
-            threads = []
-            
-            # Test connection dulu
-            if not self.connection_ok:
-                success, ip = self.ssh_manager.test_connection()
-                if success:
-                    self.connection_ok = True
-                    self.vps_ip = ip
-                    self.connection_retry_count = 0
-                else:
-                    self.after(0, self.update_status, "🔴 Connection Failed", self.accent_red)
-                    return
-            
-            # Parallel fetch
-            t1 = threading.Thread(target=self.fetch_basic_data, daemon=True)
-            t2 = threading.Thread(target=self.fetch_security_data, daemon=True)
-            t3 = threading.Thread(target=self.fetch_extended_data, daemon=True)
-            
-            threads = [t1, t2, t3]
+            if not self.ssh_manager.session_ready:
+                self.after(0, self.update_status, "🔴 Not Connected", self.accent_red)
+                return
+
+            # Run all fetch operations in parallel
+            threads = [
+                threading.Thread(target=self.fetch_basic_data, daemon=True),
+                threading.Thread(target=self.fetch_security_data, daemon=True),
+                threading.Thread(target=self.fetch_extended_data, daemon=True)
+            ]
             for t in threads:
                 t.start()
-            
-            # Wait max 10 seconds
             for t in threads:
-                t.join(timeout=10)
+                t.join(timeout=10) # Wait for max 10 seconds
             
-            if self.connection_ok:
-                self.after(0, self.update_status, "✅ Refreshed", self.accent_green)
-                self.after(2000, lambda: self.update_status("🟢 Connected", self.accent_green))
-            else:
-                self.after(0, self.update_status, "🔴 Connection Failed", self.accent_red)
+            self.after(0, self.update_status, "✅ Refreshed", self.accent_green)
         
         threading.Thread(target=do_refresh, daemon=True).start()
 
     def force_reconnect(self):
-        """Force reconnect"""
+        """Closes and restarts the persistent SSH session."""
         vps_logger.info("Force reconnect triggered")
-        self.connection_ok = False
-        self.connection_retry_count = 0
         self.after(0, self.update_status, "🔄 Reconnecting...", self.accent_orange)
         
         def do_reconnect():
-            success, ip = self.ssh_manager.test_connection()
-            if success:
-                self.connection_ok = True
-                self.vps_ip = ip
-                self.after(0, self.update_status, "🟢 Connected", self.accent_green)
-                # Immediate refresh setelah reconnect
-                self.fetch_basic_data()
-                self.fetch_security_data()
+            # Close the existing session
+            self.ssh_manager.close()
+            # Start a new session
+            self.ssh_manager.start_session()
+            
+            # The main loop will automatically detect the new session status.
+            # We can trigger an immediate refresh if the connection succeeds.
+            if self.ssh_manager.session_ready:
+                self.after(0, lambda: self.force_refresh())
             else:
-                self.after(0, self.update_status, "🔴 Failed", self.accent_red)
-        
+                self.after(0, self.update_status, "🔴 Reconnect Failed", self.accent_red)
+
         threading.Thread(target=do_reconnect, daemon=True).start() 
 
-    def _do_force_refresh(self):
-        """Do force refresh"""
-        self.fetch_basic_data()
-        self.fetch_security_data()
-        self.fetch_extended_data()
-        
-        if self.connection_ok:
-            self.after(0, self.update_status, "🟢 Connected", self.accent_green)
-        else:
-            self.after(0, self.update_status, "🔴 Connection Failed", self.accent_red)
 
 
 # ==============================================================================
