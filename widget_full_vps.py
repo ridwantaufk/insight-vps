@@ -19,7 +19,7 @@ import uuid # Added this import
 #                      KONFIGURASI SSH
 # ==============================================================================
 VPS_IP = "31.97.110.253"
-VPS_USER = "root"  # Langsung login sebagai root
+VPS_USER = "ubuntu"  # Langsung login sebagai root
 SSH_KEY_PATH = r"C:\Users\Ridwan Taufik\.ssh\id_ed25519"
 # ==============================================================================
 
