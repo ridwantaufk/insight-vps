@@ -2214,35 +2214,24 @@ class VPSSecurityMonitor(ctk.CTk):
         try:
             # Since we connect as root, sudo is no longer needed
             cmd = '''
-            echo "---PORTS---"
-            ss -tuln 2>/dev/null | grep LISTEN || echo "No ports"
-            echo "---UFW---"
-            ufw status 2>/dev/null || echo "UFW: not available"
-            echo "---APT---"
-            apt list --upgradable 2>/dev/null | wc -l
-            echo "---CRON---"
-            crontab -l 2>/dev/null || echo "No crontab"
-            echo "---LAST---"
-            last -n 20 -F 2>/dev/null
-            echo "---NET---"
-            ss -tunap 2>/dev/null | grep ESTAB || echo "No connections"
-            echo "---SUSP---"
-            ps aux 2>/dev/null | grep -E "nc |ncat |/dev/tcp|bash -i|sh -i|perl.*socket|python.*socket|xmrig|minerd" | grep -v grep || echo "None"
-            echo "---TOP---"
-            ps aux --sort=-%cpu 2>/dev/null | head -n 31
-            echo "---FAILED---"
-            grep "Failed password" /var/log/auth.log 2>/dev/null | tail -n 30 || echo "No failed"
-            echo "---ATTACKERS---"
-            lastb -n 50 -F 2>/dev/null || echo "No bad logins"
-            echo "---SYSLOG---"
-            journalctl -n 50 --no-pager 2>/dev/null || tail -n 50 /var/log/syslog 2>/dev/null || echo "No logs"
-            echo "---KERNEL---"
-            dmesg | tail -n 30 2>/dev/null || echo "No kernel"
+            echo "---PORTS---"; ss -tuln 2>/dev/null | grep LISTEN || echo "No ports";
+            echo "---UFW---"; ufw status 2>/dev/null || echo "UFW: not available";
+            echo "---APT---"; apt list --upgradable 2>/dev/null | wc -l;
+            echo "---CRON---"; crontab -l 2>/dev/null || echo "No crontab";
+            echo "---LAST---"; last -n 20 -F 2>/dev/null;
+            echo "---NET---"; ss -tunap 2>/dev/null | grep ESTAB || echo "No connections";
+            echo "---SUSP---"; ps aux 2>/dev/null | grep -E "nc |ncat |/dev/tcp|bash -i|sh -i|perl.*socket|python.*socket|xmrig|minerd" | grep -v grep || echo "None";
+            echo "---TOP---"; ps aux --sort=-%cpu 2>/dev/null | head -n 31;
+            echo "---FAILED---"; grep "Failed password" /var/log/auth.log 2>/dev/null | tail -n 30 || echo "No failed";
+            echo "---ATTACKERS---"; lastb -n 50 -F 2>/dev/null || echo "No bad logins";
+            echo "---SYSLOG---"; journalctl -n 50 --no-pager 2>/dev/null || tail -n 50 /var/log/syslog 2>/dev/null || echo "No logs";
+            echo "---KERNEL---"; dmesg | tail -n 30 2>/dev/null || echo "No kernel";
             echo "---END---"
             '''
             
-            out = self.run_ssh_command(cmd)
-            if not out:
+            out, err = self.ssh_manager.execute(cmd)
+            vps_logger.debug(f"--- RAW OUTPUT from fetch_security_data ---\n{out}\n---------------------------------")
+            if err or not out:
                 return
             
             def get_section(name):
