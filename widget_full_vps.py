@@ -2785,6 +2785,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n[!] Program dihentikan oleh user")
         sys.exit(0)
+        
     except Exception as e:
         print(f"[!] Error fatal: {e}")
         sys.exit(1)
