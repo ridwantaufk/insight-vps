@@ -1440,22 +1440,14 @@ class VPSSecurityMonitor(ctk.CTk):
             pass
 
     def run_ssh_command(self, command):
-        """Execute SSH command using manager"""
+        """Execute SSH command using the persistent session manager."""
         result, error = self.ssh_manager.execute(command)
         if error:
-            vps_logger.warning(f"Command failed: {error}")
+            vps_logger.warning(f"Command '{command[:30]}...' failed: {error}")
+            # With a persistent session, an error might mean the session is dead.
+            # The manager should handle its state, but we return empty here.
             return ""
         return result
-
-    def test_connection(self):
-        """Test SSH connection"""
-        success, ip = self.ssh_manager.test_connection()
-        if success:
-            self.vps_ip = ip
-            self.connection_retry_count = 0
-        else:
-            self.connection_retry_count += 1
-        return success
 
     def toggle_maximize(self):
         """Toggle maximize"""
