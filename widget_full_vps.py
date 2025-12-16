@@ -2202,65 +2202,46 @@ class VPSSecurityMonitor(ctk.CTk):
         sys.exit()
 
     def main_loop(self):
-        """Main loop with retry logic"""
-        iteration = 0
+        """Main loop for data fetching, relies on the persistent SSH manager."""
         last_basic_fetch = 0
         last_security_fetch = 0
         last_extended_fetch = 0
         
+        vps_logger.info("Starting main application loop.")
+
         while self.running:
             try:
                 current_time = time.time()
                 
-                # Connection check
-                if not self.connection_ok:
-                    self.after(0, self.update_status, "🟡 Connecting...", self.accent_orange)
-                    vps_logger.info(f"Attempting connection (retry {self.connection_retry_count}/{self.max_connection_retries})")
+                # Check if the persistent session is active and ready
+                if self.ssh_manager.session_ready:
+                    self.after(0, self.update_status, "🟢 Connected", self.accent_green)
                     
-                    if self.test_connection():
-                        self.connection_ok = True
-                        self.after(0, self.update_status, "🟢 Connected", self.accent_green)
-                        vps_logger.info(f"Successfully connected to {self.vps_ip}")
-                        # Reset timers setelah reconnect
-                        last_basic_fetch = 0
-                        last_security_fetch = 0
-                        last_extended_fetch = 0
-                    else:
-                        self.after(0, self.update_status, 
-                                 f"🔴 Retry {self.connection_retry_count}/{self.max_connection_retries}", 
-                                 self.accent_red)
-                        
-                        if self.connection_retry_count >= self.max_connection_retries:
-                            vps_logger.critical("Max connection retries reached, waiting 30s")
-                            wait_time = 30  # KURANGI dari 60
-                            self.connection_retry_count = 0  # Reset counter
-                        else:
-                            wait_time = 5  # KURANGI dari 10
-                        
-                        time.sleep(wait_time)
-                        continue
+                    # Fetch basic data every second
+                    if current_time - last_basic_fetch >= self.fetch_basic_interval:
+                        threading.Thread(target=self.fetch_basic_data, daemon=True).start()
+                        last_basic_fetch = current_time
+                    
+                    # Fetch security data every 10 seconds
+                    if current_time - last_security_fetch >= self.fetch_security_interval:
+                        threading.Thread(target=self.fetch_security_data, daemon=True).start()
+                        last_security_fetch = current_time
+                    
+                    # Fetch extended data every 30 seconds
+                    if current_time - last_extended_fetch >= self.fetch_extended_interval:
+                        threading.Thread(target=self.fetch_extended_data, daemon=True).start()
+                        last_extended_fetch = current_time
+                else:
+                    # If the session is not ready, display a connecting status.
+                    # The SSHConnectionManager is responsible for trying to connect.
+                    self.after(0, self.update_status, "🔄 Connecting...", self.accent_orange)
+                    vps_logger.warning("Main loop: SSH session not ready. Waiting for manager.")
                 
-                # Fetch basic data setiap 1 detik
-                if current_time - last_basic_fetch >= self.fetch_basic_interval:
-                    threading.Thread(target=self.fetch_basic_data, daemon=True).start()
-                    last_basic_fetch = current_time
-                
-                # Fetch security data setiap 10 detik
-                if current_time - last_security_fetch >= self.fetch_security_interval:
-                    threading.Thread(target=self.fetch_security_data, daemon=True).start()
-                    last_security_fetch = current_time
-                
-                # Fetch extended data setiap 30 detik
-                if current_time - last_extended_fetch >= self.fetch_extended_interval:
-                    threading.Thread(target=self.fetch_extended_data, daemon=True).start()
-                    last_extended_fetch = current_time
-                
-                iteration += 1
-                time.sleep(0.5)  # Sleep lebih pendek untuk responsive
+                time.sleep(1)  # Main loop tick rate
                 
             except Exception as e:
-                vps_logger.error(f"Main loop error: {str(e)}", exc_info=True)
-                time.sleep(2)
+                vps_logger.critical(f"Critical error in main_loop: {e}", exc_info=True)
+                time.sleep(5) # Avoid rapid-fire loops on critical error
 
     def fetch_basic_data(self):
         """Fetch basic data - OPTIMIZED"""
