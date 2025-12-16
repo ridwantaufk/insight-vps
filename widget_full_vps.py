@@ -2203,6 +2203,9 @@ class VPSSecurityMonitor(ctk.CTk):
     def quit_app(self):
         """Quit app"""
         self.running = False
+        # Properly close the persistent SSH session
+        if self.ssh_manager:
+            self.ssh_manager.close()
         self.destroy()
         sys.exit()
 
