@@ -473,9 +473,15 @@ class VPSSecurityMonitor(ctk.CTk):
         self.update_tab_content()
 
     def run_ssh_command(self, command):
-        """Execute SSH command using subprocess"""
+        """Execute SSH command using subprocess (DEBUG MODE)"""
         try:
+            # Tambahkan flag -tt untuk memaksa alokasi pseudo-tty (seringkali memperbaiki output top/sudo)
+            # Tapi hati-hati, -tt kadang bikin masalah carriage return (\r). 
+            # Kita coba dulu tanpa -tt tapi kita PRINT outputnya.
             full_cmd = f'ssh -o StrictHostKeyChecking=no {self.ssh_alias} "{command}"'
+            
+            print(f"🔄 Executing: {command[:20]}...") # Print perintah yang jalan
+            
             result = subprocess.run(
                 full_cmd,
                 shell=True,
@@ -486,10 +492,15 @@ class VPSSecurityMonitor(ctk.CTk):
                 errors='ignore'
             )
             
-            # Debug output
-            if result.returncode != 0 and result.stderr:
-                print(f"⚠️  SSH stderr: {result.stderr[:200]}")
+            # --- BAGIAN DEBUGGING (PENTING) ---
+            if result.returncode != 0:
+                print(f"❌ SSH ERROR CODE: {result.returncode}")
+                print(f"❌ STDERR: {result.stderr}") # Ini akan memberi tahu kenapa dia gagal!
             
+            if not result.stdout.strip():
+                print("⚠️  WARNING: Output kosong!")
+            # ----------------------------------
+
             return result.stdout
         except subprocess.TimeoutExpired:
             print("⏱️  SSH command timeout")
