@@ -1108,6 +1108,7 @@ class VPSSecurityMonitor(ctk.CTk):
             self.connection_ok = False
 
     
+    
     def fetch_extended_data(self):
         """Fetch extended system information"""
         try:
