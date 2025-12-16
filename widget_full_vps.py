@@ -17,8 +17,9 @@ import uuid # Added this import
 # ==============================================================================
 #                      KONFIGURASI SSH
 # ==============================================================================
-SSH_HOST = "vps"  # Atau gunakan: "ubuntu@31.97.110.253"
-SSH_KEY = r"C:\Users\Ridwan Taufik\.ssh\id_ed25519"
+VPS_IP = "31.97.110.253"
+VPS_USER = "root"  # Langsung login sebagai root
+SSH_KEY_PATH = r"C:\Users\Ridwan Taufik\.ssh\id_ed25519"
 # ==============================================================================
 
 # Database informasi proses dalam Bahasa Indonesia
@@ -170,203 +171,72 @@ class VPSLogger:
 vps_logger = VPSLogger()
 
 # ==============================================================================
-#                      SSH CONNECTION MANAGER
-# ==============================================================================
-# ==============================================================================
-#                      SSH CONNECTION MANAGER
+#                      SSH CONNECTION MANAGER (PARAMIKO)
 # ==============================================================================
 class SSHConnectionManager:
-    """Manages a single, persistent, interactive SSH session as root."""
-    def __init__(self, host, logger):
+    """Manages a persistent SSH connection using Paramiko."""
+    def __init__(self, host, user, key_path, logger):
         self.host = host
+        self.user = user
+        self.key_path = key_path
         self.logger = logger
-        self.process = None
-        self.output_queue = Queue()
-        self.is_running = True
-        self.session_ready = False
         
-        self.start_session()
+        self.ssh = paramiko.SSHClient()
+        self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
-    def _reader_thread(self):
-        """Reads stdout/stderr from the SSH process and puts it into a queue."""
+    def connect(self):
+        """Establish the SSH connection."""
         try:
-            for line in iter(self.process.stdout.readline, ''):
-                if not self.is_running:
-                    break
-                self.output_queue.put(line)
-        except Exception as e:
-            self.logger.error(f"SSH reader thread exception: {e}", exc_info=True)
-        self.logger.info("SSH reader thread finished.")
-
-    def start_session(self):
-        """Starts the persistent `ssh sudo -i` session."""
-        if self.process and self.process.poll() is None:
-            self.logger.warning("start_session called, but process is already running.")
-            return
-
-        try:
-            cmd = f'ssh -T {self.host} "stdbuf -o0 sudo -i"'
-            
-            self.logger.info(f"Starting persistent SSH session with: {cmd}")
-            
-            self.process = subprocess.Popen(
-                cmd.split(),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
-                bufsize=1,
+            self.ssh.connect(
+                self.host,
+                username=self.user,
+                key_filename=self.key_path,
+                timeout=10
             )
-            
-            self.reader = threading.Thread(target=self._reader_thread, daemon=True)
-            self.reader.start()
-            self.logger.info("Persistent SSH session process started.")
-            
-            # Test the connection to ensure the shell is ready, bypassing the session_ready check
-            test_result, err = self.execute('echo "READY"', timeout=10, _force_initial_check=True)
-            if err or "READY" not in test_result:
-                self.logger.error(f"Post-connection check failed. Error: {err}, Output: {test_result[:100]}")
-                self.session_ready = False
-            else:
-                self.logger.info("Persistent SSH session is ready and running as root.")
-                self.session_ready = True
-                
+            self.logger.info(f"Successfully connected to {self.host} as {self.user}")
+            return True
         except Exception as e:
-            self.logger.error(f"Failed to start persistent SSH session: {e}", exc_info=True)
-            self.process = None
-            self.session_ready = False
-
-    def execute(self, command, timeout=15, _force_initial_check=False):
-        """Executes a command in the persistent root shell."""
-        # The _force_initial_check flag is used only by start_session to break the deadlock
-        if not _force_initial_check and not self.session_ready:
-            self.logger.error("Cannot execute command, SSH session not ready.")
-            return "", "SSH session not running."
-
-        if not self.process or self.process.poll() is not None:
-             self.logger.error("Cannot execute command, SSH process has terminated.")
-             return "", "SSH process terminated."
-
-        boundary = f"END_OF_COMMAND_{uuid.uuid4()}"
-        full_command = f"{command}; echo {boundary}\n"
-        
-        try:
-            self.process.stdin.write(full_command)
-            self.process.stdin.flush()
-            self.logger.debug(f"Executed: {command[:100]}")
-            
-            output_lines = []
-            start_time = time.time()
-            
-            while True:
-                if time.time() - start_time > timeout:
-                    self.logger.error(f"Command '{command[:50]}' timed out after {timeout}s.")
-                    return "".join(output_lines), "Timeout"
-                
-                try:
-                    line = self.output_queue.get(timeout=0.2)
-                    
-                    if boundary in line:
-                        break
-                    
-                    if 'root@' not in line and ':~#' not in line:
-                        output_lines.append(line)
-
-                except Empty:
-                    if self.process.poll() is not None:
-                        self.logger.error("SSH process terminated unexpectedly during command execution.")
-                        self.session_ready = False
-                        return "".join(output_lines), "SSH process terminated."
-                    continue
-
-            return "".join(output_lines), None
-            
-        except Exception as e:
-            self.logger.error(f"Error executing command '{command[:50]}': {e}", exc_info=True)
-            self.session_ready = False
-            return "", f"Error: {e}"
+            self.logger.error(f"SSH connection failed: {e}", exc_info=True)
+            return False
 
     def close(self):
-        """Closes the persistent SSH session."""
-        self.logger.info("Closing persistent SSH session.")
-        self.is_running = False
-        self.session_ready = False
-        if self.process:
-            try:
-                self.process.stdin.close()
-                self.process.stdout.close()
-            except:
-                pass
-            self.process.terminate()
-            self.process.wait(timeout=5)
-        if self.reader and self.reader.is_alive():
-            self.reader.join()
-        self.logger.info("Session closed.")
+        """Close the SSH connection."""
+        if self.is_active():
+            self.ssh.close()
+            self.logger.info("SSH connection closed.")
 
-class Tooltip:
-    """Enhanced Tooltip dengan styling lebih baik"""
-    def __init__(self, widget, text):
-        self.widget = widget
-        self.text = text
-        self.tooltip = None
-        self.after_id = None
-        self.widget.bind("<Enter>", self.schedule_show)
-        self.widget.bind("<Leave>", self.hide)
-    
-    def schedule_show(self, event=None):
-        if self.after_id:
-            self.widget.after_cancel(self.after_id)
-        self.after_id = self.widget.after(500, lambda: self.show(event))
-    
-    def show(self, event=None):
-        if self.tooltip or not self.text:
-            return
-        
+    def is_active(self):
+        """Check if the SSH transport is active."""
         try:
-            x = self.widget.winfo_rootx() + 20
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-            
-            self.tooltip = ctk.CTkToplevel(self.widget)
-            self.tooltip.wm_overrideredirect(True)
-            self.tooltip.wm_geometry(f"+{x}+{y}")
-            self.tooltip.attributes('-alpha', 0.96)
-            self.tooltip.attributes('-topmost', True)
-            
-            # Shadow effect dengan frame tambahan
-            shadow = ctk.CTkFrame(
-                self.tooltip,
-                fg_color="#000000",
-                corner_radius=10
-            )
-            shadow.pack(padx=2, pady=2)
-            
-            label = ctk.CTkLabel(
-                shadow,
-                text=self.text,
-                fg_color=("#2a2a3a", "#1a1a2a"),
-                corner_radius=8,
-                padx=14,
-                pady=10,
-                font=("Segoe UI", 10),
-                text_color="#f1f5f9"
-            )
-            label.pack()
+            return self.ssh.get_transport() and self.ssh.get_transport().is_active()
         except:
-            pass
-    
-    def hide(self, event=None):
-        if self.after_id:
-            self.widget.after_cancel(self.after_id)
-            self.after_id = None
-        if self.tooltip:
-            try:
-                self.tooltip.destroy()
-            except:
-                pass
-            self.tooltip = None
+            return False
 
+    def execute(self, command, timeout=15):
+        """Execute a command over the persistent connection."""
+        if not self.is_active():
+            self.logger.warning("execute called but session is not active. Attempting reconnect.")
+            if not self.connect():
+                return "", "Connection failed"
+
+        try:
+            self.logger.debug(f"Executing command: {command[:100]}")
+            stdin, stdout, stderr = self.ssh.exec_command(command, timeout=timeout)
+            
+            output = stdout.read().decode('utf-8', 'ignore')
+            error = stderr.read().decode('utf-8', 'ignore')
+            
+            if error:
+                # Ignore certain non-fatal errors
+                if "command not found" not in error and "No such file" not in error:
+                     self.logger.warning(f"SSH command stderr: {error.strip()}")
+
+            return output, error if error else None
+        
+        except Exception as e:
+            self.logger.error(f"Error executing command '{command[:50]}': {e}", exc_info=True)
+            self.close() # Close connection on significant error
+            return "", str(e)
 class VPSSecurityMonitor(ctk.CTk):
     def __init__(self):
         super().__init__()
